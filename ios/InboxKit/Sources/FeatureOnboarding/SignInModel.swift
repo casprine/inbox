@@ -74,7 +74,7 @@ public final class SignInModel {
     }
     public struct FocusRequest: Equatable, Sendable { public let field: SignInField; let serial: Int }
 
-    public static let addressKey = "api_base_url"
+    public nonisolated static let addressKey = "api_base_url"
     /// Lock-outs by server, kept for the launch only so leaving and coming back to the screen still shows the countdown.
     private static var lockouts: [String: Date] = [:]
     public static func forgetLockouts() { lockouts = [:] }
@@ -86,6 +86,8 @@ public final class SignInModel {
     public var revealed = false
     public private(set) var isLoading = false
     public private(set) var issue: Issue?
+    /// `setup_step` from the last successful login (nil when the server doesn't send it).
+    public private(set) var setupStep: String?
     public private(set) var focusRequest: FocusRequest?
 
     private let env: AppEnvironment
@@ -142,7 +144,8 @@ public final class SignInModel {
         address = url.absoluteString
         isLoading = true
         do {
-            try await env.api.login(server: url, password: password, deviceName: deviceName)
+            let ok = try await env.api.login(server: url, password: password, deviceName: deviceName)
+            setupStep = ok.setupStep
             password = ""
             defaults.set(url.absoluteString, forKey: Self.addressKey)
             Self.lockouts[url.absoluteString] = nil

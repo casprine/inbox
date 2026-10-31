@@ -208,9 +208,77 @@ final class LiveTests: XCTestCase {
         let field = app.secureTextFields["Password"]
         field.tap(); field.typeText(ProcessInfo.processInfo.environment["INBOX_DEV_PASSWORD"] ?? "dev-password-inbox-local")
         app.buttons["Sign in"].tap()
+        // "I already set this up" resumes where the server says setup stands (`setup_step`). The sandbox has no Gmail account, so it
+        // reports `gmail`: the Gmail step, skipped here, then Set up later and Open Inbox (OB12). A server that reports `done` (or no step, with businesses) lands on Mail.
+        let step = try newDevice(name: "ios-e2e setup step").setupStep
+        if step == "gmail" {
+            XCTAssertTrue(app.buttons["Skip for now"].waitForExistence(timeout: 20), "setup_step gmail resumes at the Gmail step")
+            app.buttons["Skip for now"].tap()
+            let finish = app.buttons["Set up later"]
+            XCTAssertTrue(finish.waitForExistence(timeout: 20))   // appears once the few seconds of searching for Alfather are over
+            let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: finish)
+            XCTAssertEqual(XCTWaiter().wait(for: [enabled], timeout: 15), .completed)
+            finish.tap()
+            // OB12 "You're set up." ends setup; "Open Inbox" hands over to Mail.
+            XCTAssertTrue(app.staticTexts["You're set up."].waitForExistence(timeout: 10))
+            app.buttons["Open Inbox"].tap()
+        }
         openMail(app)
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Acme Studio'")).firstMatch.waitForExistence(timeout: 15),
                       "mail loads with the device token the login returned")
+    }
+
+    // MARK: Session lost (C-20)
+
+    /// `POST /v1/auth/login` with the dev password: a fresh device (id + token) that the test can revoke without touching the dev token.
+    private func newDevice(name: String) throws -> (id: String, token: String, setupStep: String?) {
+        var req = URLRequest(url: URL(string: base.absoluteString + "/v1/auth/login")!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let password = ProcessInfo.processInfo.environment["INBOX_DEV_PASSWORD"] ?? "dev-password-inbox-local"
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["password": password, "device_name": name])
+        var out: Data?
+        let sem = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: req) { d, _, _ in out = d; sem.signal() }.resume()
+        sem.wait()
+        let obj = try XCTUnwrap(out.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+        return (try XCTUnwrap(obj["device_id"] as? String), try XCTUnwrap(obj["token"] as? String), obj["setup_step"] as? String)
+    }
+
+    func testRevokedDeviceShowsTheSignedOutBannerThenSignsInAgain() throws {
+        let device = try newDevice(name: "ios-e2e revoked")
+        let app = XCUIApplication()
+        app.launchEnvironment["INBOX_API_BASE_URL"] = base.absoluteString
+        app.launchEnvironment["INBOX_DEV_TOKEN"] = device.token       // this phone signed in earlier with its own device token
+        app.launch()
+        openMail(app)
+        let acme = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Acme Studio'")).firstMatch
+        XCTAssertTrue(acme.waitForExistence(timeout: 15))
+        let banner = element(app, containing: "You've been signed out")
+        XCTAssertFalse(banner.exists, "signed in: no banner")
+
+        try api("DELETE", "/v1/devices/\(device.id)")                  // the owner revokes this phone's token on the server
+        // The next call with the revoked token (the Rules tab loads) gets 401.
+        app.buttons["Rules"].tap()
+        XCTAssertTrue(app.staticTexts["Rules"].firstMatch.waitForExistence(timeout: 10))
+        Thread.sleep(forTimeInterval: 2)
+        app.buttons["Mail"].firstMatch.tap()
+        XCTAssertTrue(banner.waitForExistence(timeout: 15), "banner after the token was revoked")
+        XCTAssertTrue(acme.exists, "mail already on the phone stays readable")
+        // Sitting on the screen causes no retry loop: still just the banner after a while (no error flapping, no extra prompts).
+        Thread.sleep(forTimeInterval: 6)
+        XCTAssertTrue(banner.exists)
+
+        app.buttons["Sign in"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Sign in again"].waitForExistence(timeout: 10))
+        let address = app.textFields["Server address"]
+        XCTAssertEqual(address.value as? String, base.absoluteString, "the server address is kept")
+        let field = app.secureTextFields["Password"]
+        field.tap(); field.typeText(ProcessInfo.processInfo.environment["INBOX_DEV_PASSWORD"] ?? "dev-password-inbox-local")
+        app.buttons["signin-submit"].tap()
+        XCTAssertTrue(app.staticTexts["Businesses"].waitForExistence(timeout: 20), "signed-out sign-in goes back to Mail, never to onboarding")
+        XCTAssertFalse(element(app, containing: "You've been signed out").waitForExistence(timeout: 3), "banner gone after signing in again")
+        XCTAssertTrue(acme.waitForExistence(timeout: 15))
     }
 
     func testUnreachableServerShowsTheBannerNotAnError() throws {

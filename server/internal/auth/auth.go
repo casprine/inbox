@@ -118,7 +118,30 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteProblem(w, http.StatusInternalServerError, "internal", "")
 		return
 	}
-	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"device_id": id.String(), "token": token})
+	resp := map[string]string{"device_id": id.String(), "token": token}
+	if step, err := s.setupStep(r.Context()); err != nil {
+		s.log().Warn("setup step", "err", err) // optional field: omitted on error, the app falls back to its own guess
+	} else {
+		resp["setup_step"] = step
+	}
+	httpapi.WriteJSON(w, http.StatusOK, resp)
+}
+
+// setupStep says where first-run setup stands, from server state: "domains" while no business exists,
+// "gmail" once one does but Gmail is not connected, "done" when Gmail is connected. Backfill is optional and
+// does not gate "done" (the owner may skip importing old mail).
+func (s *Service) setupStep(ctx context.Context) (string, error) {
+	biz, gm, _, err := s.Store.SetupProgress(ctx)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case !biz:
+		return "domains", nil
+	case !gm:
+		return "gmail", nil
+	}
+	return "done", nil
 }
 
 // Bearer authenticates the device token and stores the device in the request context.

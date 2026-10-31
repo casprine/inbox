@@ -119,7 +119,7 @@ private final class RecordingDiscovery: AlfatherDiscovering, @unchecked Sendable
         #expect(try status(#"{"paired":true,"connected":true,"paired_at":"2026-10-01T09:00:00Z","last_seen_at":"2026-10-11T09:00:00Z","waiting":0,"mcp_url":"https://h/mcp"}"#).state() == .connected)
         let quiet = try status(#"{"paired":true,"connected":false,"paired_at":"2026-10-01T09:00:00Z","last_seen_at":"2026-10-11T09:00:00Z","waiting":3}"#)
         let seen = quiet.lastSeen!
-        #expect(quiet.state(now: seen.addingTimeInterval(600)) == .reconnecting)
+        #expect(quiet.state(now: seen.addingTimeInterval(600)) == .reconnecting && quiet.state(now: seen.addingTimeInterval(1_500)) == .reconnecting)
         #expect(quiet.state(now: seen.addingTimeInterval(3_600)) == .unreachable && quiet.waiting == 3)
     }
 

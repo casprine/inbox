@@ -12,9 +12,12 @@ public struct SearchScreen: View {
     @FocusState private var focused: Bool
     @Binding var path: [Route]
     let initialQuery: String?
+    private let autoFocus: Bool
 
+    /// `autoFocus: false` keeps the keyboard down (snapshots of the idle state).
     public init(env: AppEnvironment, scope: UUID?, importing: Bool = false, useMockData: Bool = false,
-                initialQuery: String? = nil, path: Binding<[Route]>) {
+                initialQuery: String? = nil, autoFocus: Bool = true, path: Binding<[Route]>) {
+        self.autoFocus = autoFocus
         let backend: any SearchBackend = useMockData ? LocalSearchBackend(db: env.database) : APISearchBackend(api: env.api, db: env.database)
         _model = State(initialValue: SearchModel(backend: backend, scope: scope, importing: importing))
         self.initialQuery = initialQuery; _path = path; db = env.database
@@ -32,7 +35,7 @@ public struct SearchScreen: View {
         .task {
             if let name = try? await db.businesses().first(where: { $0.id == model.scope })?.name { model.setScopeName(name) }
             await model.loadRecents()
-            if let q = initialQuery, !q.isEmpty { model.query = q; await model.submit() } else { focused = true }
+            if let q = initialQuery, !q.isEmpty { model.query = q; await model.submit() } else if autoFocus { focused = true }
         }
     }
 
@@ -57,7 +60,8 @@ public struct SearchScreen: View {
             .padding(.horizontal, 10).frame(minHeight: 38)
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(p.field))
             .overlay { if focused { RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(p.accent, lineWidth: 1.5) } }
-            Button("Cancel") { dismiss() }.font(.inboxBody(17)).foregroundStyle(p.accentText).buttonStyle(.plain).frame(minHeight: 44)
+            Button("Cancel") { dismiss() }.font(.inboxBody(17, medium: true)).foregroundStyle(p.accentText).buttonStyle(.plain).frame(minHeight: 44)
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)   // DD-18.2: keeps the field at 60 % of the row at AX sizes
         }
         .padding(.horizontal, 16).padding(.vertical, 8)
     }
@@ -164,7 +168,7 @@ public struct SearchScreen: View {
                     HStack(spacing: 8) {
                         if !model.showsScopeChip || model.sections.count > 1 { header(section.name) }
                         else { header(section.name) }
-                        Text("\(section.total)").font(.inboxBody(12.5, medium: true)).foregroundStyle(p.secondary)
+                        Text("\(section.total)").font(.inboxBody(12, medium: true)).monospacedDigit().foregroundStyle(p.secondary)
                         Spacer()
                     }
                     .padding(.horizontal, 16).padding(.vertical, 6).frame(maxWidth: .infinity).background(p.ground)
@@ -205,7 +209,7 @@ public struct SearchScreen: View {
         .scrollDismissesKeyboard(.interactively)
     }
 
-    private func header(_ s: String) -> some View { Text(s.uppercased()).font(.inboxBody(12.5, medium: true)).tracking(0.5).foregroundStyle(p.secondary) }
+    private func header(_ s: String) -> some View { Text(s.uppercased()).font(.inboxBody(12, medium: true)).tracking(0.6).foregroundStyle(p.secondary) }
 }
 
 private extension View {
@@ -247,7 +251,7 @@ struct SearchRow: View {
         return Text(out)
     }
 
-    static func time(_ d: Date, now: Date = .now) -> String {
+    static func time(_ d: Date, now: Date = AppClock.now) -> String {
         let cal = Calendar.current
         if cal.isDate(d, inSameDayAs: now) { return d.formatted(date: .omitted, time: .shortened) }
         if cal.isDateInYesterday(d) { return "Yesterday" }

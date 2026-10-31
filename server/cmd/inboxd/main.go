@@ -73,7 +73,7 @@ func main() {
 
 func serve(ctx context.Context, log *slog.Logger, cfg config.Config) error {
 	if err := cfg.ValidateServe(); err != nil {
-		return err
+		return configProblems(log, err)
 	}
 	// Hashed once, in memory, with a random salt; the password itself is never stored or logged.
 	passwords, err := auth.NewPasswordVerifier(cfg.OwnerPassword)
@@ -94,12 +94,18 @@ func serve(ctx context.Context, log *slog.Logger, cfg config.Config) error {
 	var alfAPI *alfather.API
 	var healthChecker *health.Checker
 	if cfg.DatabaseURL != "" {
+		// Forward-only schema migrations under an advisory lock: safe to run on every start (idempotent).
+		log.Info("applying migrations")
+		if err := migrate.Up(ctx, cfg.DatabaseURL); err != nil {
+			return fmt.Errorf("migrations: %w", err)
+		}
 		pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 		if err != nil {
 			return err
 		}
 		defer pool.Close()
-		pinger = pool
+		ready := &readiness{db: pool, ttl: 30 * time.Second}
+		pinger = ready
 		hub := events.NewHub(pool, store.New(pool), log)
 		go hub.Run(ctx) // closes every SSE stream when ctx ends, before the HTTP server shuts down
 		{
@@ -119,8 +125,10 @@ func serve(ctx context.Context, log *slog.Logger, cfg config.Config) error {
 			bfSvc = &backfill.Service{Store: store.New(pool), Gmail: gsvc, Events: hub, Log: log}
 			healthChecker = &health.Checker{Store: store.New(pool), Gmail: gsvc}
 			if cfg.S3Endpoint != "" && cfg.S3Bucket != "" {
-				api.Blob = blob.New(blob.Config{Endpoint: cfg.S3Endpoint, Region: cfg.S3Region, Bucket: cfg.S3Bucket,
+				bs := blob.New(blob.Config{Endpoint: cfg.S3Endpoint, Region: cfg.S3Region, Bucket: cfg.S3Bucket,
 					AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey})
+				api.Blob = bs
+				ready.blob = bs
 			}
 			svc := &auth.Service{Store: store.New(pool), Password: passwords, Login: &auth.LoginLimiter{},
 				ClientIPHeader: cfg.LoginIPHeader, Log: log}
@@ -199,19 +207,30 @@ func serve(ctx context.Context, log *slog.Logger, cfg config.Config) error {
 			log.Warn("S3 not configured: ingest disabled")
 		}
 	}
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.New(pinger, opts...), ReadHeaderTimeout: 10 * time.Second}
+	// The API listener has no WriteTimeout cap that would cut long responses short beyond 2 minutes; the SSE
+	// stream clears its own write deadline. The ingest listener only ever answers a tiny JSON POST.
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.New(pinger, opts...), ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout: 60 * time.Second, WriteTimeout: 2 * time.Minute, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 32 << 10}
 	servers := []*http.Server{srv}
 	if ingestHandler != nil {
 		// A second listener carries only /ingest/v1/notify, so it can be published to the internet on its own
 		// (Tailscale Funnel) while the app API stays on the tailnet (D-020).
-		servers = append(servers, &http.Server{Addr: cfg.IngestAddr, Handler: ingestHandler, ReadHeaderTimeout: 10 * time.Second})
+		servers = append(servers, &http.Server{Addr: cfg.IngestAddr, Handler: ingestHandler, ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10})
 	}
+	// SIGTERM (docker stop) cancels ctx: stop accepting, let in-flight requests finish (up to 20 s), then the
+	// deferred River stop and pool close run. serve does not return before the drain is complete.
+	drained := make(chan struct{})
 	go func() {
+		defer close(drained)
 		<-ctx.Done()
-		sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		log.Info("shutting down: draining requests")
+		sctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		for _, s := range servers {
-			_ = s.Shutdown(sctx)
+			if err := s.Shutdown(sctx); err != nil {
+				log.Warn("shutdown", "addr", s.Addr, "err", err)
+			}
 		}
 	}()
 	errc := make(chan error, len(servers))
@@ -227,7 +246,28 @@ func serve(ctx context.Context, log *slog.Logger, cfg config.Config) error {
 			stopAll(servers) // one listener failed (for example the port is taken): stop the other one too
 		}
 	}
+	if first == nil {
+		<-drained
+		log.Info("stopped")
+	}
 	return first
+}
+
+// configProblems logs every configuration problem on its own line (each names its variable, none prints a
+// secret) and returns a short error for main to exit on.
+func configProblems(log *slog.Logger, err error) error {
+	var problems []string
+	if j, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, e := range j.Unwrap() {
+			problems = append(problems, e.Error())
+		}
+	} else {
+		problems = []string{err.Error()}
+	}
+	for _, p := range problems {
+		log.Error("invalid configuration", "problem", p)
+	}
+	return fmt.Errorf("refusing to start: %d configuration problem(s), see the lines above", len(problems))
 }
 
 func stopAll(servers []*http.Server) {

@@ -12,7 +12,7 @@ public enum MockData {
         UUID(uuidString: String(format: "00000000-0000-4000-8000-%012d", n))!
     }
 
-    public static func businesses(now: Date = .now) -> [BusinessRecord] {
+    public static func businesses(now: Date = AppClock.now) -> [BusinessRecord] {
         func rec(_ id: UUID, _ name: String, _ domain: String, _ order: Int, _ unread: Int, _ addrs: [(String, Int)]) -> BusinessRecord {
             let json = "[" + addrs.map { #"{"local_part":"\#($0.0)","count":\#($0.1),"last_at":null}"# }.joined(separator: ",") + "]"
             return BusinessRecord(id: id, name: name, domain: domain, sortOrder: order, hidden: false, enabled: true,
@@ -26,7 +26,7 @@ public enum MockData {
         ]
     }
 
-    public static func messages(now: Date = .now) -> [MessageRecord] {
+    public static func messages(now: Date = AppClock.now) -> [MessageRecord] {
         let h: TimeInterval = 3600
         func m(_ n: Int, _ biz: UUID, _ to: String, _ from: String, _ subject: String, _ snippet: String, ago: TimeInterval, read: Bool) -> MessageRecord {
             MessageRecord(id: messageID(n), businessId: biz, fromAddr: "\(from.lowercased().replacingOccurrences(of: " ", with: "."))@example.com",
@@ -50,14 +50,14 @@ public enum MockData {
     }
 
     /// Extra rows for the reader screens (blocked-images email). Seeded only with `includeReader`.
-    public static func readerMessages(now: Date = .now) -> [MessageRecord] {
+    public static func readerMessages(now: Date = AppClock.now) -> [MessageRecord] {
         [MessageRecord(id: messageID(13), businessId: acme, fromAddr: "orders@stripe.example", fromName: "Stripe",
                        subject: "New order #1182", snippet: "You have a new order. 2 × Copper Kettle · $148.00.", toLocal: "orders",
                        receivedAt: now.addingTimeInterval(-0.2 * 3600), isRead: false, threadKey: "t13")]
     }
 
     /// Fills the cache; attention counts live in prefs (`attention.unrouted`, `attention.failed`).
-    public static func seed(_ db: AppDatabase, now: Date = .now, includeReader: Bool = false) async throws {
+    public static func seed(_ db: AppDatabase, now: Date = AppClock.now, includeReader: Bool = false) async throws {
         try await db.replaceBusinesses(businesses(now: now))
         try await db.upsertMessages(messages(now: now) + (includeReader ? readerMessages(now: now) : []))
         try await db.setPref("attention.unrouted", "3")

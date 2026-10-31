@@ -31,7 +31,7 @@ paths:
     get:
       tags: [ops]
       operationId: healthz
-      summary: Liveness probe
+      summary: Liveness probe (the process is up; checks nothing else)
       security: []
       responses:
         "200":
@@ -43,7 +43,7 @@ paths:
     get:
       tags: [ops]
       operationId: readyz
-      summary: Readiness probe (pings the database)
+      summary: Readiness probe (the database and the blob store, R2, both answer)
       security: []
       responses:
         "200":
@@ -1654,6 +1654,7 @@ components:
       required: [status]
       properties:
         status: {type: string, enum: [ok, ready, unavailable]}
+        failed: {type: string, enum: [database, blob store], description: "Only on 503 from /readyz: which dependency did not answer"}
     NotifyPayload:
       type: object
       required: [key, env_from, env_to, raw_size, received_at, message_id]
@@ -1677,6 +1678,13 @@ components:
       properties:
         device_id: {type: string, format: uuid}
         token: {type: string, description: Bearer token, returned once}
+        setup_step:
+          type: string
+          enum: [domains, gmail, done]
+          description: |
+            Optional. Where first-run setup stands, computed from server state at sign-in: `domains` (no business yet),
+            `gmail` (a business exists, Gmail not connected), `done` (Gmail connected; importing old mail is optional
+            and does not gate it). Absent on older servers or if the lookup failed: clients fall back to their own guess.
     Rule:
       type: object
       required: [id, name, position, enabled, business_id, match_to_local, match_from, match_subject, gmail_label,

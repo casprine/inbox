@@ -162,7 +162,7 @@ public final class RoutingProblemModel {
     /// Days since the last message, for "No mail for 6 days."
     public var quietDays: Int? {
         guard let d = business?.lastMessageAt else { return nil }
-        let n = Calendar.current.dateComponents([.day], from: d, to: .now).day ?? 0
+        let n = Calendar.current.dateComponents([.day], from: d, to: AppClock.now).day ?? 0
         return n >= 1 ? n : nil
     }
 }

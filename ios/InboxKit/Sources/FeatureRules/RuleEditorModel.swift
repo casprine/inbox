@@ -35,7 +35,7 @@ public final class RuleEditorModel {
             if ch == "(" { depth += 1 } else if ch == ")" { depth -= 1; if depth < 0 { return "Pattern isn't valid: unexpected )." } }
             prev = ch
         }
-        if depth > 0 { return "Pattern isn't valid: missing closing )." }
+        if depth > 0 { return "Missing a closing bracket “)”." }
         if (try? NSRegularExpression(pattern: t)) == nil { return "Pattern isn't valid. Check brackets and escapes." }
         return nil
     }

@@ -38,8 +38,10 @@ private struct ThemeRoot: ViewModifier {
     func body(content: Content) -> some View {
         let scheme = mode.resolve(system: system)
         InboxType.size = typeSize
+        let palette = Palette.resolved(for: scheme)
         return content
-            .environment(\.palette, .resolved(for: scheme))
+            .environment(\.palette, palette)
+            .tint(palette.accentText)   // DD-2: system alerts and sheets draw "Cancel" in the app red, never system blue
             .preferredColorScheme(mode.override)
             .id(typeSize)
     }

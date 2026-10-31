@@ -14,6 +14,8 @@ struct SignInStep: View {
     var autoFocus = true
     /// Draws the focus ring on a row without focusing it (snapshots: a real focus raises the keyboard and scrolls the screen).
     var ringOverride: SignInField?
+    /// Snapshots only: iOS blanks secure fields in screen captures, so draw one bullet per character in their place (H-16).
+    var bulletsPreview = false
     @FocusState private var focus: SignInField?
     @AccessibilityFocusState private var titleFocused: Bool
     @AccessibilityFocusState private var errorFocused: Bool
@@ -114,7 +116,10 @@ struct SignInStep: View {
             SecureField("Password", text: $model.password, prompt: passwordPrompt)
                 .focused($focus, equals: .password)
                 .textContentType(.password)
-                .opacity(model.revealed ? 0 : 1).allowsHitTesting(!model.revealed).accessibilityHidden(model.revealed)
+                .opacity(model.revealed || bulletsPreview ? 0 : 1).allowsHitTesting(!model.revealed).accessibilityHidden(model.revealed)
+            if bulletsPreview && !model.revealed && !model.password.isEmpty {
+                Text(String(repeating: "•", count: model.password.count)).font(.inboxBody(17)).foregroundStyle(p.text).allowsHitTesting(false)
+            }
             TextField("Password", text: $model.password, prompt: passwordPrompt)
                 .focused($focus, equals: .passwordShown)
                 .opacity(model.revealed ? 1 : 0).allowsHitTesting(model.revealed).accessibilityHidden(!model.revealed)
@@ -201,20 +206,22 @@ struct SignInStep: View {
             let remaining = model.lockRemaining()
             let label = remaining.map(SignInCopy.lockButton) ?? "Sign in"
             let enabled = model.canSubmit
+            let locked = remaining != nil && !model.isLoading   // D5 §2: field fill + secondary label, readable at full opacity
             Button { submit() } label: {
                 ZStack {
-                    Text(label).font(.inboxBody(17, medium: true)).foregroundStyle(p.onAccent).multilineTextAlignment(.center)
+                    Text(label).font(.inboxBody(17, medium: true)).monospacedDigit().foregroundStyle(locked ? p.secondary : p.onAccent).multilineTextAlignment(.center)
                         .opacity(model.isLoading ? 0 : 1)
                     if model.isLoading { ProgressView().tint(p.onAccent).accessibilityHidden(true) }
                 }
                 .frame(maxWidth: .infinity, minHeight: 52).padding(.vertical, accessible ? 8 : 0)
-                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(p.accentFill))
+                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(locked ? p.field : p.accentFill))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(UndimmedButtonStyle())   // `.plain` fades a disabled label; the locked label must stay at full contrast
             .disabled(!enabled)
-            .opacity(enabled || model.isLoading ? 1 : 0.4)
+            .opacity(enabled || model.isLoading || locked ? 1 : 0.4)
             .accessibilityLabel(model.isLoading ? "Signing in" : remaining.map { "Try again in \(SignInCopy.spoken($0))" } ?? "Sign in")
             .accessibilityAddTraits(model.isLoading ? .updatesFrequently : [])
+            .accessibilityIdentifier("signin-submit")
         }
     }
 
@@ -222,7 +229,7 @@ struct SignInStep: View {
         guard model.canSubmit else { return }
         focus = nil
         task = Task {
-            if await model.submit() { await onboarding.signedIn(model.mode) }
+            if await model.submit() { await onboarding.signedIn(model.mode, setupStep: model.setupStep) }
         }
     }
 }
@@ -287,4 +294,9 @@ private struct SignInBanner: View {
         .padding(.horizontal, 14).padding(.vertical, 12)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(p.card))
     }
+}
+
+/// Same as `.plain` but never dims the label when the button is disabled (the locked sign-in button carries its own colours).
+private struct UndimmedButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { configuration.label }
 }

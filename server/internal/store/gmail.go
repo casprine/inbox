@@ -278,3 +278,11 @@ func (q *Queries) UpdateGmailAccountSeal(ctx context.Context, id uuid.UUID, enc 
 	_, err := q.db.Exec(ctx, `UPDATE gmail_accounts SET refresh_token_enc=$2, key_id=$3 WHERE id=$1`, id, enc, keyID)
 	return err
 }
+
+// SetupProgress reports which first-run milestones the server state shows: at least one business, a connected
+// Gmail account, and at least one backfill started. It backs the login response's setup_step.
+func (q *Queries) SetupProgress(ctx context.Context) (businesses, gmail, backfill bool, err error) {
+	err = q.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM businesses), EXISTS (SELECT 1 FROM gmail_accounts),
+EXISTS (SELECT 1 FROM backfills)`).Scan(&businesses, &gmail, &backfill)
+	return
+}

@@ -76,6 +76,15 @@ func notFound(err error) bool {
 	return false
 }
 
+// Ping checks that the bucket answers with the configured credentials: it asks for a key that does not exist,
+// so "not found" is success and anything else (network, credentials, missing bucket) is an error.
+func (s *Store) Ping(ctx context.Context) error {
+	if _, err := s.Head(ctx, ".readyz-probe"); err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
 // Put uploads a stream of known length.
 func (s *Store) Put(ctx context.Context, key string, r io.Reader, length int64, meta map[string]string) error {
 	_, err := s.c.PutObject(ctx, &s3.PutObjectInput{

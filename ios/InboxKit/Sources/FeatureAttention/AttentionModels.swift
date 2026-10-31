@@ -85,12 +85,25 @@ public final class FailedModel {
     public private(set) var failed = false
     public private(set) var retrying: Set<UUID> = []
     public private(set) var notice: String?
+    public private(set) var businessNames: [UUID: String] = [:]
     private let env: AppEnvironment
     public init(env: AppEnvironment) { self.env = env }
 
     public var isEmpty: Bool { !isLoading && items.isEmpty }
 
+    /// DD-9: the Failed list is grouped by business like Unrouted (first appearance order; mail without a business last).
+    public struct Group: Identifiable { public let businessId: UUID?; public let name: String; public let items: [FailedMessage]; public var id: String { businessId?.uuidString ?? "none" } }
+    public var groups: [Group] {
+        var order: [UUID?] = []
+        for f in items where !order.contains(where: { $0 == f.message.businessId }) { order.append(f.message.businessId) }
+        let sorted = order.filter { $0 != nil } + order.filter { $0 == nil }
+        return sorted.map { id in
+            Group(businessId: id, name: id.flatMap { businessNames[$0] } ?? "No business", items: items.filter { $0.message.businessId == id })
+        }
+    }
+
     public func load() async {
+        if let rows = try? await env.database.businesses() { businessNames = Dictionary(rows.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a }) }
         do { items = try await env.api.failed(); failed = false; try? await env.database.setPref("attention.failed", String(items.count)) }
         catch { failed = true }
         isLoading = false
@@ -107,6 +120,9 @@ public final class FailedModel {
         await load()
         retrying.remove(id)
     }
+
+    /// Snapshot aid (NA06): shows the "Retrying…" row without waiting for a real retry.
+    public func previewRetrying(_ id: UUID) { retrying.insert(id) }
 
     public func dismiss(_ id: UUID) async -> Bool {
         do {

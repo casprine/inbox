@@ -56,3 +56,14 @@ import Testing
         #expect(DynamicTypeSize.accessibility1.isAccessibilitySize && !DynamicTypeSize.xxxLarge.isAccessibilitySize)
     }
 }
+
+@MainActor @Suite struct BackLabelFitTests {
+    @Test func collidingLabelBecomesBack() {
+        #expect(BackLabelFit.label("Businesses", title: "Lumen Hosting", barWidth: 390) == "Back")
+        #expect(BackLabelFit.label("Businesses", title: "Harbor & Pine Provisions", barWidth: 390) == "Back")
+        #expect(BackLabelFit.label("Businesses", title: "Acme Studio", barWidth: 390) == "Businesses")
+        #expect(BackLabelFit.label("Settings", title: "Privacy", barWidth: 390) == "Settings")
+        #expect(BackLabelFit.label("Businesses", title: "", barWidth: 390) == "Businesses")
+        #expect(BackLabelFit.label("Businesses", title: "Lumen Hosting", barWidth: 0) == "Businesses")   // width not measured yet
+    }
+}

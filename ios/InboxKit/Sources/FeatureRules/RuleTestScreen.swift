@@ -60,12 +60,12 @@ public struct RuleTestScreen: View {
 
     @ViewBuilder private func results(_ r: RuleTestResult) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Test results").font(.inboxHeading(28, relativeTo: .title)).foregroundStyle(p.text)
+            Text("Test results").font(.inboxHeadingBold(27, relativeTo: .title2)).tracking(-0.5).foregroundStyle(p.text)
             Text("\(r.wouldMatch.count) of the last \(r.scanned) messages").font(.inboxBody(15)).foregroundStyle(p.secondary)
         }
         .accessibilityElement(children: .combine).accessibilityAddTraits(.isHeader)
         if r.wouldMatch.isEmpty && r.caughtEarlier.isEmpty {
-            EmptyState(title: "Nothing would match", message: "None of the last \(r.scanned) messages fit these conditions. Loosen the subject or sender and test again.")
+            EmptyState(title: "No matches", message: "None of the last \(r.scanned) messages match. Check the address or widen the subject.")
         }
         if !r.wouldMatch.isEmpty {
             InsetGroup("Would match · \(r.wouldMatch.count)") {

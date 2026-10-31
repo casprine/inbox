@@ -14,6 +14,7 @@ public final class APIClient: Sendable {
     private let tokens: any TokenStore
     private let session: URLSession
     private let makeKey: @Sendable () -> String
+    private let unauthorizedHandler = OSAllocatedUnfairLock<(@Sendable () -> Void)?>(initialState: nil)
 
     public init(baseURL: URL, tokenStore: any TokenStore, session: URLSession = .shared,
                 idempotencyKey: @escaping @Sendable () -> String = { UUID().uuidString }) {
@@ -21,6 +22,18 @@ public final class APIClient: Sendable {
         self.tokens = tokenStore
         self.session = session
         self.makeKey = idempotencyKey
+    }
+
+    /// Called once each time a token that was valid stops being accepted (401 on an authenticated call). The token is already cleared then.
+    public func onUnauthorized(_ handler: (@Sendable () -> Void)?) { unauthorizedHandler.withLock { $0 = handler } }
+
+    /// A 401 for a request that carried `sentToken`: forget that token (never a newer one from a sign-in that finished meanwhile) and tell
+    /// the app once. Later calls then fail with `notAuthenticated` without touching the network, so nothing retries against the server.
+    func tokenRejected(_ sentToken: String) async {
+        guard await tokens.token() == sentToken else { return }
+        await tokens.clear()
+        let h = unauthorizedHandler.withLock { $0 }
+        h?()
     }
 
     // MARK: JSON coding
@@ -91,6 +104,9 @@ public final class APIClient: Sendable {
         do { (data, resp) = try await session.data(for: r, delegate: delegate) }
         catch { throw APIError.transport((error as NSError).localizedDescription) }
         guard let http = resp as? HTTPURLResponse else { throw APIError.transport("non-HTTP response") }
+        if http.statusCode == 401, let auth = r.value(forHTTPHeaderField: "Authorization"), auth.hasPrefix("Bearer ") {
+            await tokenRejected(String(auth.dropFirst("Bearer ".count)))
+        }
         return (data, http)
     }
 

@@ -169,7 +169,12 @@ public final class MessageListModel {
         guard !list.isEmpty else { return }
         try? await env.mail.setArchived(true, ids: list)
         endSelecting()
-        showToast(ToastState(message: list.count == 1 ? "Archived" : "\(list.count) archived", kind: .archived, ids: list))
+        showToast(ToastState(message: Self.archivedToast(count: list.count, gmailConnected: env.gmail.isConnected), kind: .archived, ids: list))
+    }
+
+    /// DD-11: the "also in Gmail" claim is only true while write-back is connected.
+    public nonisolated static func archivedToast(count: Int, gmailConnected: Bool) -> String {
+        (count == 1 ? "Archived" : "\(count) archived") + (gmailConnected ? " · also in Gmail" : "")
     }
 
     /// Cancels the queued archive (outbox inverse) and restores the rows.

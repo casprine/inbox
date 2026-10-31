@@ -5,12 +5,14 @@ import API
 
 private struct ValueRow: View {
     @Environment(\.palette) private var p
+    @Environment(\.dynamicTypeSize) private var typeSize
     let title: String
     let value: String
     var divider = true
     var body: some View {
         InsetRow(title, showsDivider: divider) {
-            Text(value).font(.inboxBody(17)).foregroundStyle(p.secondary).multilineTextAlignment(.trailing)
+            // DD-18.3: at accessibility sizes the value sits under its caption, leading-aligned.
+            Text(value).font(.inboxBody(17)).foregroundStyle(p.secondary).multilineTextAlignment(typeSize.isAccessibilitySize ? .leading : .trailing)
         }
     }
 }
@@ -118,7 +120,7 @@ public struct OriginalScreen: View {
     }
 
     private func line(_ k: String, _ v: String) -> some View {
-        Text(k + ": ").foregroundStyle(p.secondary) + Text(v).foregroundStyle(v.hasPrefix("pass") ? p.text : p.accent)
+        Text(k + ": ").foregroundStyle(p.secondary) + Text(v).foregroundStyle(v.hasPrefix("pass") ? p.text : p.accentText)
     }
 
     private func section<C: View>(_ title: String, @ViewBuilder _ c: () -> C) -> some View {

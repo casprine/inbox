@@ -113,14 +113,18 @@ public final class SSEClient: Sendable {
                 while !Task.isCancelled {
                     var parser = SSEParser()
                     do {
-                        let req = try await api.eventStreamRequest()
+                        let req: URLRequest
+                        do { req = try await api.eventStreamRequest() }
+                        catch APIError.notAuthenticated { continuation.yield(.unauthorized); continuation.finish(); return }   // signed out: no reconnect loop
                         let (bytes, resp) = try await api.streamSession.bytes(for: req)
                         guard let http = resp as? HTTPURLResponse else { throw APIError.transport("non-HTTP") }
                         guard http.statusCode == 200 else {
                             var body = Data()
                             for try await b in bytes { body.append(b); if body.count > 8192 { break } }
                             let err = APIClient.decodeError(body, http)
-                            if err.status == 401 { continuation.yield(.unauthorized); continuation.finish(); return }
+                            if err.status == 401 {
+                                if let auth = req.value(forHTTPHeaderField: "Authorization"), auth.hasPrefix("Bearer ") { await api.tokenRejected(String(auth.dropFirst(7))) }
+                                continuation.yield(.unauthorized); continuation.finish(); return }
                             throw err
                         }
                         backoff = minBackoff

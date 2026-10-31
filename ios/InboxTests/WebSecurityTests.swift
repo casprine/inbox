@@ -2,6 +2,7 @@ import Testing
 import Foundation
 import Network
 import WebKit
+import SwiftUI
 @testable import Web
 
 /// Loopback HTTP server that counts every connection and request it receives. Because WKWebView's network
@@ -162,6 +163,16 @@ private final class Nav: NSObject, WKNavigationDelegate {
         #expect(await decide("about:blank", .other) == .allow)
         #expect(opened.withLock { $0.map(\.absoluteString) } == ["https://example.com/a", "http://example.com/b"])
         #expect(prefs.allowsContentJavaScript == false)
+    }
+
+    @Test func htmlTextSizeAdjustFollowsDynamicType() {
+        #expect(HTMLDocument.textScalePercent(for: .large) == 100)
+        #expect(HTMLDocument.textScalePercent(for: .xSmall) == 100)
+        #expect(HTMLDocument.textScalePercent(for: .accessibility3) > 150)
+        #expect(HTMLDocument.textScalePercent(for: .accessibility5) <= 200)
+        #expect(HTMLDocument.prepare("<p>x</p>").contains("-webkit-text-size-adjust:100%"))
+        #expect(HTMLDocument.prepare("<p>x</p>", textScalePercent: 190).contains("-webkit-text-size-adjust:190%"))
+        #expect(HTMLDocument.prepare("<p>x</p>", textScalePercent: 900).contains("-webkit-text-size-adjust:200%"))
     }
 
     @Test func htmlPreparation() {

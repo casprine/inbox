@@ -101,6 +101,17 @@ private struct Rig {
         #expect(rig.batches.isEmpty)
     }
 
+    @Test func archiveToastMentionsGmailOnlyWhenConnected() async throws {
+        #expect(MessageListModel.archivedToast(count: 1, gmailConnected: true) == "Archived · also in Gmail")
+        #expect(MessageListModel.archivedToast(count: 1, gmailConnected: false) == "Archived")
+        #expect(MessageListModel.archivedToast(count: 3, gmailConnected: false) == "3 archived")
+        let rig = try Rig()
+        rig.env.gmail.set(GmailStatus(state: .connected, email: "sam@gmail.com"))
+        let m = try await rig.model(.business(MockData.acme))
+        await m.archive([MockData.messageID(1)])
+        #expect(m.toast?.message == "Archived · also in Gmail")
+    }
+
     @Test func toastDismissesAfterDuration() async throws {
         let m = try await Rig().model(.business(MockData.acme), toast: .milliseconds(50))
         await m.archive([MockData.messageID(1), MockData.messageID(2)])

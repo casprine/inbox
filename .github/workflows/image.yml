@@ -84,6 +84,12 @@ jobs:
           out="$(docker run --rm inbox-server:smoke --help)"
           echo "$out"
           grep -q "usage: inboxd" <<<"$out"
+          # Runs as an unprivileged user.
+          test "$(docker run --rm --entrypoint id inbox-server:smoke -u)" != 0
+          # The image defaults to production mode: with no settings it refuses to start and names the variables.
+          if err="$(docker run --rm inbox-server:smoke serve 2>&1)"; then echo "serve started without any settings"; exit 1; fi
+          grep -q OWNER_PASSWORD <<<"$err"
+          grep -q INGEST_SECRET <<<"$err"
 
       - name: Build and push (amd64, arm64)
         id: push
@@ -118,8 +124,10 @@ jobs:
         run: |
           {
             echo "### Published"
+            echo "Pin this exact build on the Mac mini (deploy/.env):"
             echo '```'
-            echo "${IMAGE}@${{ steps.push.outputs.digest }}"
+            echo "INBOX_IMAGE=${IMAGE}@${{ steps.push.outputs.digest }}"
             echo '```'
+            echo "Or a version tag (push a git tag vX.Y.Z to get X.Y.Z): INBOX_IMAGE=${IMAGE}:X.Y.Z"
             echo "Tags: ${{ steps.meta.outputs.tags }}"
           } >> "$GITHUB_STEP_SUMMARY"

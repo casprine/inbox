@@ -5,15 +5,17 @@ import Foundation
 public enum HTMLDocument {
     public static let cidScheme = "inbox-cid"
 
-    static let headInjection = """
+    /// DD-18.6: `-webkit-text-size-adjust` as a percentage (100 at Large, up to 200 at AX5).
+    static func headInjection(textScalePercent pct: Int = 100) -> String { """
     <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light">\
     <style>:root{color-scheme:light}html{background:#fff}body{background:#fff;margin:0;padding:0;\
-    overflow-wrap:anywhere;-webkit-text-size-adjust:100%}img{max-width:100%;height:auto}\
+    overflow-wrap:break-word;word-break:normal;-webkit-text-size-adjust:\(min(max(pct, 100), 200))%}img{max-width:100%;height:auto}a,pre,code{overflow-wrap:anywhere}table{max-width:100%}\
     .inbox-blocked{box-sizing:border-box;display:flex;align-items:center;justify-content:center;margin:4px auto;max-width:100%;\
     border:1px dashed #bbb;color:#888;font:11px -apple-system,sans-serif;text-align:center;overflow:hidden}</style>
-    """
+    """ }
 
-    public static func prepare(_ html: String, allowImages: Bool = true) -> String {
+    public static func prepare(_ html: String, allowImages: Bool = true, textScalePercent: Int = 100) -> String {
+        let headInjection = headInjection(textScalePercent: textScalePercent)
         var body = rewriteCIDs(html)
         if !allowImages { body = blockRemoteImages(body) }
         if let r = body.range(of: "<head[^>]*>", options: [.regularExpression, .caseInsensitive]) {

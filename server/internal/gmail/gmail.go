@@ -31,9 +31,11 @@ const (
 	DefaultTokenURL  = "https://oauth2.googleapis.com/token"
 	DefaultRevokeURL = "https://oauth2.googleapis.com/revoke"
 	DefaultAPIBase   = "https://gmail.googleapis.com/gmail/v1"
-	// ScopeModify reads, labels and archives mail. Filters are read with the same scope;
-	// if Google rejects that, set Config.Scopes to add gmail.settings.basic (DECISIONS Q-T18-2).
+	// ScopeModify reads, labels and archives mail.
 	ScopeModify = "https://www.googleapis.com/auth/gmail.modify"
+	// ScopeSettings reads Gmail filters (import as rules) and creates them. Requested together with ScopeModify
+	// up front so the owner consents once (DECISIONS D-015).
+	ScopeSettings = "https://www.googleapis.com/auth/gmail.settings.basic"
 
 	// tokenAAD is authenticated with the sealed refresh token (not stored).
 	tokenAAD = "gmail_refresh_token"
@@ -63,7 +65,7 @@ func (c Config) scopes() []string {
 	if len(c.Scopes) > 0 {
 		return c.Scopes
 	}
-	return []string{ScopeModify}
+	return []string{ScopeModify, ScopeSettings}
 }
 
 func or(v, def string) string {

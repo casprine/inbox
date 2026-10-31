@@ -43,14 +43,14 @@ public final class MessageWebLoader: NSObject, WKNavigationDelegate {
 
     /// Installs the rule list *before* loading, so nothing can fetch ahead of it. Fails closed: if the rules can't
     /// be compiled nothing is loaded and the error is thrown.
-    public func load(html: String, allowImages: Bool) async throws {
+    public func load(html: String, allowImages: Bool, textScalePercent: Int = 100) async throws {
         let rules = try await ContentRules.compile(allowImages: allowImages)
         let ucc = webView.configuration.userContentController
         ucc.removeAllContentRuleLists()
         ucc.add(rules)
         generation += 1
         finish?.resume(); finish = nil
-        webView.loadHTMLString(HTMLDocument.prepare(html, allowImages: allowImages), baseURL: nil)
+        webView.loadHTMLString(HTMLDocument.prepare(html, allowImages: allowImages, textScalePercent: textScalePercent), baseURL: nil)
         await withCheckedContinuation { finish = $0 }
     }
 
@@ -84,6 +84,7 @@ public struct MessageWebView: UIViewRepresentable {
     let resolveCID: @Sendable (String) async -> CIDResource?
     @Binding var height: CGFloat
     let onOpenLink: (URL) -> Void
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     public init(html: String, allowImages: Bool, height: Binding<CGFloat>,
                 resolveCID: @escaping @Sendable (String) async -> CIDResource? = { _ in nil },
@@ -107,10 +108,35 @@ public struct MessageWebView: UIViewRepresentable {
         c.loader.onOpenLink = onOpenLink
         let h = $height
         c.loader.onHeight = { new in if abs(h.wrappedValue - new) > 0.5 { h.wrappedValue = new } }
-        let key = "\(allowImages)|\(html)"
+        let pct = HTMLDocument.textScalePercent(for: typeSize)
+        let key = "\(allowImages)|\(pct)|\(html)"
         guard c.loaded != key else { return }
         c.loaded = key
-        Task { @MainActor in try? await c.loader.load(html: html, allowImages: allowImages) }
+        Task { @MainActor in try? await c.loader.load(html: html, allowImages: allowImages, textScalePercent: pct) }
+    }
+}
+
+extension HTMLDocument {
+    /// UIFontMetrics scale of `size` against Large, as a percent (100 at Large, capped at 200).
+    public static func textScalePercent(for size: DynamicTypeSize) -> Int {
+        let category: UIContentSizeCategory
+        switch size {
+        case .xSmall: category = .extraSmall
+        case .small: category = .small
+        case .medium: category = .medium
+        case .large: category = .large
+        case .xLarge: category = .extraLarge
+        case .xxLarge: category = .extraExtraLarge
+        case .xxxLarge: category = .extraExtraExtraLarge
+        case .accessibility1: category = .accessibilityMedium
+        case .accessibility2: category = .accessibilityLarge
+        case .accessibility3: category = .accessibilityExtraLarge
+        case .accessibility4: category = .accessibilityExtraExtraLarge
+        case .accessibility5: category = .accessibilityExtraExtraExtraLarge
+        @unknown default: category = .large
+        }
+        let scaled = UIFontMetrics.default.scaledValue(for: 100, compatibleWith: UITraitCollection(preferredContentSizeCategory: category))
+        return min(max(Int(scaled.rounded()), 100), 200)
     }
 }
 #endif

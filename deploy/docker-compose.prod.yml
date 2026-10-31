@@ -1,17 +1,25 @@
-# The Inbox server on the Mac mini: the server image from GitHub Container Registry, a Postgres container
-# beside it, and a one-shot migration. See docs/DEPLOY.md.
+# The Inbox server on the Mac mini: the server image from GitHub Container Registry and a Postgres container
+# beside it. Schema migrations run inside the server at every start (advisory lock, forward-only). See docs/DEPLOY.md.
 #
 #   cd deploy && cp .env.example .env && $EDITOR .env      # once
-#   docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d --wait
 #
 # This is not the development stack: deploy/docker-compose.yml (Postgres + a local S3 stand-in for tests) is.
-# Nobody runs `docker compose down -v` here: the `pgdata` volume is the database.
+# Nobody runs `docker compose down -v` here: the `pgdata` volume is the database (docs/RUNBOOK.md, backups).
 name: inbox-prod
+
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "3"}   # bounded logs, no resource limits otherwise
 
 services:
   postgres:
-    image: postgres:16
+    # Pinned. Upgrading Postgres across major versions needs a dump and restore (docs/RUNBOOK.md); stay on 16.x.
+    image: postgres:16.6-alpine
     restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    logging: *logging
     environment:
       POSTGRES_USER: inbox
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
@@ -22,38 +30,38 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U inbox -d inbox"]
       interval: 5s
+      timeout: 3s
       retries: 20
 
-  migrate:
-    image: ${INBOX_IMAGE:-ghcr.io/OWNER/REPO/inbox-server:latest}
-    command: ["migrate"]
-    restart: "no"
-    environment:
-      DATABASE_URL: postgres://inbox:${POSTGRES_PASSWORD}@postgres:5432/inbox?sslmode=disable
-    depends_on:
-      postgres: {condition: service_healthy}
-
   inbox:
-    image: ${INBOX_IMAGE:-ghcr.io/OWNER/REPO/inbox-server:latest}
+    # Set INBOX_IMAGE to an explicit version tag (or, best, a digest): there is deliberately no default.
+    image: ${INBOX_IMAGE:?set INBOX_IMAGE in deploy/.env (ghcr.io/<owner>/<repo>/inbox-server:<version> or @sha256:<digest>)}
     restart: unless-stopped
+    init: true
+    stop_grace_period: 30s          # the server drains requests and stops its job runner on SIGTERM
+    logging: *logging
     depends_on:
       postgres: {condition: service_healthy}
-      migrate: {condition: service_completed_successfully}
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     # Published on the loopback interface only: tailscaled (Serve and Funnel) is the way in from outside.
     ports:
-      - "127.0.0.1:8080:8080"   # app API        -> tailscale serve
-      - "127.0.0.1:8081:8081"   # ingest notify  -> tailscale funnel
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-8080}:8080"        # app API        -> tailscale serve
+      - "${INGEST_BIND:-127.0.0.1}:${INGEST_PORT:-8081}:8081"  # ingest notify  -> tailscale funnel
     environment:
+      INBOX_ENV: production         # the server refuses weak or missing settings and says which (docs/DEPLOY.md)
       DATABASE_URL: postgres://inbox:${POSTGRES_PASSWORD}@postgres:5432/inbox?sslmode=disable
-      OWNER_PASSWORD: ${OWNER_PASSWORD:?set OWNER_PASSWORD (at least 12 characters) in deploy/.env}
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL to the Tailscale Serve address in deploy/.env}
-      INGEST_SECRET: ${INGEST_SECRET:?set INGEST_SECRET in deploy/.env}
-      TOKEN_ENC_KEYS: ${TOKEN_ENC_KEYS:?set TOKEN_ENC_KEYS in deploy/.env}
-      S3_ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT (the R2 endpoint) in deploy/.env}
+      OWNER_PASSWORD: ${OWNER_PASSWORD:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      INGEST_SECRET: ${INGEST_SECRET:-}
+      TOKEN_ENC_KEYS: ${TOKEN_ENC_KEYS:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
       S3_BUCKET: ${S3_BUCKET:-inbox-mail}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in deploy/.env}
-      S3_SECRET_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY in deploy/.env}
-      S3_REGION: auto
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_REGION: ${S3_REGION:-auto}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       CF_API_TOKEN: ${CF_API_TOKEN:-}
@@ -61,6 +69,7 @@ services:
       CF_WORKER_NAME: ${CF_WORKER_NAME:-inbox-worker}
       DEADMAN_URL: ${DEADMAN_URL:-}
       RECONCILE_INTERVAL: ${RECONCILE_INTERVAL:-5m}
+      RECONCILE_MIN_AGE: ${RECONCILE_MIN_AGE:-}
       # Tailscale Serve proxies from the host, so every request would look like one client to the login
       # limiter. If Serve sends the caller's address in X-Forwarded-For (UNVERIFIED, see docs/DEPLOY.md),
       # set LOGIN_IP_HEADER=X-Forwarded-For in .env so the lockout is per client.
@@ -68,9 +77,9 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/readyz >/dev/null"]
       interval: 15s
-      timeout: 3s
+      timeout: 5s
       retries: 3
-      start_period: 20s
+      start_period: 30s
 
 volumes:
   pgdata:

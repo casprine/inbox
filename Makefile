@@ -21,6 +21,10 @@ docker-build:
 	docker build -f deploy/Dockerfile -t inbox-server .
 edge-test:
 	cd edge && npm ci && npm test && npx tsc --noEmit
+# Bundles the Worker and validates wrangler.jsonc offline (no Cloudflare login, nothing is uploaded).
+.PHONY: edge-dryrun
+edge-dryrun:
+	cd edge && WRANGLER_SEND_METRICS=false npx wrangler deploy --dry-run --outdir "$${TMPDIR:-/tmp}/inbox-worker-dry-run"
 # What CI runs for the server and the edge worker (the iOS job runs on a macOS runner).
 ci: lint test-integration edge-test
 e2e:
@@ -69,3 +73,9 @@ ios-e2e: ios-gen ios-sim
 # Re-record the snapshot baselines in ios/InboxTests/Snapshots after an intended UI change (iPhone 17 Pro, iOS 26.5).
 ios-record-snapshots: ios-gen ios-sim
 	TEST_RUNNER_RECORD_SNAPSHOTS=1 xcodebuild -project ios/Inbox.xcodeproj -scheme Inbox -destination '$(IOS_DEST)' -only-testing:InboxTests/SnapshotTests test
+
+# Production-like smoke test: builds the image, runs deploy/docker-compose.prod.yml under its own project
+# (inbox-prod-smoke) against the local S3 stand-in, checks the whole flow, tears down only that project.
+.PHONY: prod-smoke
+prod-smoke: up
+	scripts/prod-smoke.sh

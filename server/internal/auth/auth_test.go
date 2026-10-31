@@ -188,6 +188,39 @@ func TestLoginAndBearer(t *testing.T) {
 	}
 }
 
+// setup_step lets the app resume first-run setup exactly where it stopped (C-19).
+func TestLoginSetupStep(t *testing.T) {
+	h := newHarness(t)
+	step := func() string {
+		t.Helper()
+		st, body, _ := h.do(t, "POST", "/v1/auth/login", "", map[string]string{"password": testPassword, "device_name": "iPhone"}, nil)
+		var out struct {
+			Token     string `json:"token"`
+			SetupStep string `json:"setup_step"`
+		}
+		if st != 200 || json.Unmarshal(body, &out) != nil || out.Token == "" {
+			t.Fatalf("login: %d %s", st, body)
+		}
+		return out.SetupStep
+	}
+	ctx := context.Background()
+	if got := step(); got != "domains" {
+		t.Fatalf("empty server: %q, want domains", got)
+	}
+	if _, err := h.svc.Store.CreateBusiness(ctx, store.Business{ID: uuid.New(), Name: "Acme", Domain: "acme.test", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := step(); got != "gmail" {
+		t.Fatalf("business but no Gmail: %q, want gmail", got)
+	}
+	if _, err := h.svc.Store.UpsertGmailAccount(ctx, uuid.New(), "me@gmail.test", []byte("sealed"), "k1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := step(); got != "done" {
+		t.Fatalf("Gmail connected: %q, want done", got)
+	}
+}
+
 func TestLoginRejectsBadRequests(t *testing.T) {
 	h := newHarness(t)
 	for _, body := range []any{map[string]string{}, map[string]string{"password": ""}, "not an object"} {

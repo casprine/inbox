@@ -45,6 +45,7 @@ public struct MailRow: View {
     @ViewBuilder private var leading: some View {
         if case .selecting(let selected) = mode {
             Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 17)).fixedSize()   // does not scale with Dynamic Type: it would overlap the sender at AX sizes
                 .foregroundStyle(selected ? p.accent : p.hairlineStrong)
         } else if let m = model, m.isUnread {
             Circle().fill(p.accent).frame(width: 9, height: 9)
@@ -58,18 +59,18 @@ public struct MailRow: View {
             // Accessibility sizes: the time sits under the sender instead of fighting it for the line.
             if typeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(m.sender).font(.inboxBody(16, medium: m.isUnread)).foregroundStyle(p.text)
-                    Text(m.time).font(.inboxBody(14, relativeTo: .subheadline)).foregroundStyle(p.secondary)
+                    Text(m.sender).font(.inboxBody(15.5, medium: m.isUnread)).foregroundStyle(p.text)
+                    Text(m.time).font(.inboxBody(13.5, relativeTo: .subheadline)).monospacedDigit().foregroundStyle(p.secondary)
                 }
             } else {
                 HStack {
-                    Text(m.sender).font(.inboxBody(16, medium: m.isUnread)).foregroundStyle(p.text).lineLimit(1)
+                    Text(m.sender).font(.inboxBody(15.5, medium: m.isUnread)).foregroundStyle(p.text).lineLimit(1)
                     Spacer(minLength: 8)
-                    Text(m.time).font(.inboxBody(14, relativeTo: .subheadline)).foregroundStyle(p.secondary)
+                    Text(m.time).font(.inboxBody(13.5, relativeTo: .subheadline)).monospacedDigit().foregroundStyle(p.secondary)
                 }
             }
-            Text(m.subject).font(.inboxBody(15)).foregroundStyle(p.text).lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
-            if !m.preview.isEmpty { Text(m.preview).font(.inboxBody(15)).foregroundStyle(p.secondary).lineLimit(previewLines) }
+            Text(m.subject).font(.inboxBody(14.5)).foregroundStyle(p.text).lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+            if !m.preview.isEmpty { Text(m.preview).font(.inboxBody(14.5)).foregroundStyle(p.secondary).lineLimit(previewLines) }
         }
     }
 

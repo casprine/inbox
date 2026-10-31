@@ -11,9 +11,10 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 inbox
 COPY --from=build /out/inboxd /usr/local/bin/inboxd
 USER inbox
-ENV HTTP_ADDR=:8080 INGEST_ADDR=:8081
+# INBOX_ENV=production: the server refuses missing or insecure settings instead of warning (docs/DEPLOY.md).
+ENV HTTP_ADDR=:8080 INGEST_ADDR=:8081 INBOX_ENV=production
 # 8080: the app API (Tailscale Serve). 8081: only /ingest/v1/notify (Tailscale Funnel).
 EXPOSE 8080 8081
-# `inboxd migrate` runs as its own compose service (deploy/docker-compose.prod.yml) before the server starts.
+# `inboxd serve` applies pending schema migrations at start (advisory lock); `inboxd migrate` does the same by hand.
 ENTRYPOINT ["inboxd"]
 CMD ["serve"]

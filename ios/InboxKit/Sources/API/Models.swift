@@ -52,6 +52,9 @@ public struct LoginRequest: Codable, Sendable {
 public struct LoginResponse: Codable, Sendable {
     public var deviceId: UUID
     public var token: String
+    /// Where setup stopped on this server: `domains`, `gmail` or `done` (optional; older servers don't send it).
+    public var setupStep: String?
+    public init(deviceId: UUID, token: String, setupStep: String? = nil) { self.deviceId = deviceId; self.token = token; self.setupStep = setupStep }
 }
 
 public struct Message: Codable, Sendable, Hashable, Identifiable {
@@ -541,11 +544,11 @@ public struct AlfatherStatus: Codable, Sendable, Hashable {
     }
     private enum CodingKeys: String, CodingKey { case paired, connected, pairedAt, lastSeenAt, waiting, mcpUrl }
 
-    /// AF01–AF04: not paired → setup; connected → ok; paired but quiet for under 15 min → reconnecting; longer → not reachable.
+    /// AF01–AF04: not paired → setup; connected → ok; paired but quiet for 5 to 30 min → reconnecting (DD-16); longer → not reachable.
     public func state(now: Date = .now) -> State {
         if !paired { return .notPaired }
         if connected { return .connected }
-        if let t = lastSeen, now.timeIntervalSince(t) < 15 * 60 { return .reconnecting }
+        if let t = lastSeen, now.timeIntervalSince(t) < 30 * 60 { return .reconnecting }
         return .unreachable
     }
 }

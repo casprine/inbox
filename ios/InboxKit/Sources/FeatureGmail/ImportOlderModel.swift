@@ -9,7 +9,7 @@ import Persistence
 public final class ImportOlderModel {
     public enum Range: Hashable, Sendable { case days(Int), custom }
     public var range: Range = .days(90) { didSet { if range != oldValue { Task { await refreshEstimate() } } } }
-    public var customSince = Calendar.current.date(byAdding: .month, value: -6, to: .now) ?? .now
+    public var customSince = Calendar.current.date(byAdding: .month, value: -6, to: AppClock.now) ?? AppClock.now
     public var chosenBusinesses: Set<UUID> = []             // empty = all enabled businesses
     public private(set) var businesses: [BusinessRecord] = []
     public private(set) var estimate: BackfillEstimate?
@@ -89,7 +89,7 @@ public final class ImportOlderModel {
     }
 
     /// Plain words for a pause: the reason and when it ends.
-    public func pauseText(now: Date = .now) -> (title: String, detail: String) {
+    public func pauseText(now: Date = AppClock.now) -> (title: String, detail: String) {
         switch store.pauseReason {
         case "rate_limited":
             let when = store.pausedUntil.map { " around \($0.formatted(date: .omitted, time: .shortened))" } ?? " soon"

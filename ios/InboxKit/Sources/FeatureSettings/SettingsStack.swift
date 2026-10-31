@@ -6,7 +6,7 @@ import FeatureBusinesses
 import FeatureGmail
 
 public enum SettingsRoute: Hashable, Sendable {
-    case gmail, businesses, importOlder, alfather, health, appearance, privacy, about
+    case gmail, businesses, importOlder, alfather, health, appearance, privacy, about, licence
     case business(UUID), routing(UUID)
 }
 
@@ -72,7 +72,8 @@ public struct SettingsStack: View {
         case .health: HealthScreen(env: env) { path.append($0) }
         case .appearance: AppearanceScreen(env: env)
         case .privacy: PrivacyScreen(env: env)
-        case .about: AboutScreen(env: env)
+        case .about: AboutScreen(env: env) { path.append(.licence) }
+        case .licence: LicenceScreen()
         case .alfather: AlfatherScreen(env: env)
         case .importOlder: ImportOlderScreen(env: env)
         }
@@ -88,7 +89,7 @@ public struct SettingsStack: View {
         health = await h.rowValue
         healthKind = h.report == nil ? .idle : (h.report!.problems.isEmpty ? .ok : .warning)
         if let s = try? await env.api.alfatherStatus() {
-            alfatherKind = switch s.state() { case .connected: .ok; case .reconnecting: .warning; case .unreachable: .error; case .notPaired: .idle }
+            alfatherKind = switch s.state(now: AppClock.now) { case .connected: .ok; case .reconnecting: .warning; case .unreachable: .error; case .notPaired: .idle }
         }
         // Screenshot aids (mock mode): `-OpenGmail 1`, `-OpenSettings <route>`.
         let d = UserDefaults.standard
@@ -105,6 +106,7 @@ public struct SettingsStack: View {
                 case "privacy": path = [.privacy]
                 case "alfather": path = [.alfather]
                 case "about": path = [.about]
+                case "licence": path = [.about, .licence]
                 case "import": path = [.importOlder]
                 default: break
                 }

@@ -47,7 +47,7 @@ public final class HealthModel {
     }
 
     /// "Checked 1 min ago".
-    public func checkedText(now: Date = .now) -> String {
+    public func checkedText(now: Date = AppClock.now) -> String {
         guard let d = report?.checkedAt else { return "" }
         let s = max(Int(now.timeIntervalSince(d)), 0)
         if s < 60 { return "Checked just now" }
@@ -77,7 +77,7 @@ public final class AlfatherModel {
     private let discovery: any AlfatherDiscovering
     public init(env: AppEnvironment, discovery: any AlfatherDiscovering) { self.env = env; self.discovery = discovery }
 
-    public var state: AlfatherStatus.State { status.state() }
+    public var state: AlfatherStatus.State { status.state(now: AppClock.now) }
 
     public func load() async {
         do { status = try await env.api.alfatherStatus() ?? AlfatherStatus(paired: false, connected: false); error = nil }
@@ -96,7 +96,7 @@ public final class AlfatherModel {
     }
     public var lastSeenText: String {
         guard let d = status.lastSeen else { return "" }
-        if Date.now.timeIntervalSince(d) < 90 { return "last seen just now" }
+        if AppClock.now.timeIntervalSince(d) < 90 { return "last seen just now" }
         return "last seen \(RelativeDay.string(d))"
     }
 }

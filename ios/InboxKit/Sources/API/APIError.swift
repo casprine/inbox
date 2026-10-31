@@ -49,6 +49,11 @@ public enum APIError: Error, Sendable, Equatable {
         if let f = p.field { return [RuleFieldError(field: f, message: p.detail ?? p.title, column: p.column)] }
         return []
     }
+    /// The device token is missing or was rejected (revoked, expired): the person has to sign in again. Never retry these.
+    public var isSessionLost: Bool {
+        if case .notAuthenticated = self { return true }
+        return status == 401
+    }
     /// True for failures worth retrying later (offline, 5xx, 429); false for permanent rejections.
     public var isRetryable: Bool {
         switch self {

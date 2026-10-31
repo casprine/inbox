@@ -22,7 +22,7 @@ public struct UnroutedScreen: View {
                 else if model.isEmpty { EmptyState(title: "Nothing unrouted", message: "Every message matched a rule or a business.") }
                 else {
                     ForEach(Array(model.groups.enumerated()), id: \.offset) { _, g in
-                        Text("\(model.businessName(g)) · \(g.count)".uppercased()).font(.inboxBody(12.5, medium: true)).tracking(0.5)
+                        Text("\(model.businessName(g)) · \(g.count)".uppercased()).font(.inboxBody(12, medium: true)).tracking(0.6).monospacedDigit()
                             .foregroundStyle(p.secondary).padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 6)
                         ForEach(g.messages) { m in
                             Button { composing = m } label: { MailRow(row(m)) }.buttonStyle(.plain)
@@ -88,7 +88,7 @@ public struct RuleFromMessageSheet: View {
                             set: { model.draft.archive = $0; if $0 { model.draft.labelOnly = false } }))
                     }
                     Text(model.matchSummary).font(.inboxBody(15)).foregroundStyle(p.secondary)
-                    if let e = model.errorText { Text(e).font(.inboxBody(14)).foregroundStyle(p.accent) }
+                    if let e = model.errorText { Text(e).font(.inboxBody(14)).foregroundStyle(p.accentText) }
                     PrimaryButton("Create rule") { Task { if await model.create() { dismiss() } } }
                         .disabled(!model.canCreate).opacity(model.canCreate ? 1 : 0.5)
                 }
@@ -114,22 +114,30 @@ public struct FailedScreen: View {
     @Environment(\.palette) private var p
     @State private var model: FailedModel
     @Binding var path: [Route]
+    private let previewRetrying: Bool
 
-    public init(env: AppEnvironment, path: Binding<[Route]>) { _model = State(initialValue: FailedModel(env: env)); _path = path }
+    public init(env: AppEnvironment, path: Binding<[Route]>, previewRetrying: Bool = false) {
+        _model = State(initialValue: FailedModel(env: env)); _path = path; self.previewRetrying = previewRetrying
+    }
 
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                PageTitle("Failed", subtitle: "\(model.items.count) message\(model.items.count == 1 ? "" : "s") couldn't be stored")
+                PageTitle("Failed", subtitle: model.isEmpty || model.isLoading ? nil : "\(model.items.count) message\(model.items.count == 1 ? "" : "s") couldn't be processed")
                 if let n = model.notice { Banner(.warning, title: n).padding(.horizontal, 16) }
                 if model.failed { Banner(.warning, title: "Couldn't load", message: "Pull to refresh to try again.").padding(.horizontal, 16) }
                 if model.isLoading { ProgressView().frame(maxWidth: .infinity).padding(.top, 40) }
-                else if model.isEmpty { EmptyState(title: "Nothing failed", message: "Every message was saved.") }
+                else if model.isEmpty { EmptyState(title: "Nothing failed", message: "Every message has been stored and sorted.") }
                 else {
-                    ForEach(model.items) { f in
-                        Button { path.append(.failedDetail(f.id)) } label: { MailRow(row(f)) }.buttonStyle(.plain)
+                    ForEach(model.groups) { g in
+                        Text("\(g.name) · \(g.items.count)".uppercased()).font(.inboxBody(12, medium: true)).tracking(0.6).monospacedDigit()
+                            .foregroundStyle(p.secondary).padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 6)
+                            .accessibilityAddTraits(.isHeader)
+                        ForEach(g.items) { f in
+                            Button { path.append(.failedDetail(f.id)) } label: { MailRow(row(f)) }.buttonStyle(.plain)
+                        }
                     }
-                    Text("These were delivered to Gmail but Inbox couldn't keep a copy.")
+                    Text("These were delivered to Gmail, but Inbox couldn't process them.")
                         .font(.inboxBody(13.5)).foregroundStyle(p.secondary).padding(.horizontal, 20).padding(.vertical, 16)
                 }
             }
@@ -137,7 +145,7 @@ public struct FailedScreen: View {
         .background(p.ground)
         .inboxPushed(title: "", back: "Businesses")
         .refreshable { await model.load() }
-        .task { await model.load() }
+        .task { await model.load(); if previewRetrying, let f = model.items.first { model.previewRetrying(f.id) } }
     }
 
     private func row(_ f: FailedMessage) -> MailRowModel {
@@ -177,7 +185,7 @@ public struct FailedDetailScreen: View {
     @ViewBuilder private func detail(_ f: FailedMessage) -> some View {
         let copy = FailureCopy.text(reason: f.failureReason, sizeBytes: f.sizeBytes)
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.circle.fill").font(.system(size: 18)).foregroundStyle(p.destructive).padding(.top, 1)
+            Image(systemName: "exclamationmark.circle.fill").font(.system(size: 18)).foregroundStyle(p.accent).padding(.top, 1)
             (Text(copy.lead + " ").font(.inboxBody(15, medium: true)).foregroundColor(p.text)
                 + Text(copy.detail).font(.inboxBody(15)).foregroundColor(p.text))
                 .fixedSize(horizontal: false, vertical: true)
@@ -201,7 +209,7 @@ public struct FailedDetailScreen: View {
                 action(model.retrying.contains(f.id) ? "Retrying…" : "Retry", divider: false) { Task { await model.retry(f.id) } }
             }
         }
-        InsetGroup { action("Dismiss", color: p.destructive, divider: false) { Task { if await model.dismiss(f.id) { dismiss() } } } }
+        InsetGroup { action("Dismiss", color: p.accentText, divider: false) { Task { if await model.dismiss(f.id) { dismiss() } } } }
     }
 
     private func action(_ title: String, color: Color? = nil, divider: Bool, _ run: @escaping () -> Void) -> some View {

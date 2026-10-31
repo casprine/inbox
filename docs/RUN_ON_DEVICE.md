@@ -69,3 +69,6 @@ The phone must be connected to **Tailscale** (same tailnet as the Mac mini) to r
    rm -rf ~/Library/Developer/Xcode/DerivedData/Inbox-*/Build && make ios-gen
    ```
    Reopen and Run again (Product → Clean Build Folder also works).
+
+## If the phone gets signed out
+When the server revokes this phone's token (or it expires) the app clears it and shows "You've been signed out" on Mail; your mail stays readable. Tap Sign in: the server address is already filled in, type the server password. Nothing else is lost. (The dev token from `Local.xcconfig` is only used at launch; after signing in with the password the phone uses its own token until the next launch.)

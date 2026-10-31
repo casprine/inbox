@@ -1,10 +1,11 @@
 import Foundation
 import DesignSystem
+import Domain
 import Persistence
 
 /// Row timestamps: time today, "Yesterday", weekday within a week, else "Oct 4".
 public enum MailTime {
-    public static func string(_ date: Date, now: Date = .now, calendar: Calendar = .current, locale: Locale = .current) -> String {
+    public static func string(_ date: Date, now: Date = AppClock.now, calendar: Calendar = .current, locale: Locale = .current) -> String {
         let template: String
         if calendar.isDate(date, inSameDayAs: now) {
             template = "jmm"
@@ -34,7 +35,7 @@ public enum MailTime {
 }
 
 extension MailRowModel {
-    init(_ m: MessageRecord, now: Date = .now) {
+    init(_ m: MessageRecord, now: Date = AppClock.now) {
         let sender = [m.fromName, m.fromAddr].compactMap { $0 }.first { !$0.isEmpty } ?? "Unknown sender"
         self.init(id: m.id.uuidString, sender: sender, subject: m.subject?.isEmpty == false ? m.subject! : "(no subject)",
                   preview: m.snippet ?? "", time: MailTime.string(m.receivedAt, now: now), isUnread: !m.isRead)

@@ -20,8 +20,9 @@ POST /v1/auth/login
 Content-Type: application/json
 {"password": "<the owner password>", "device_name": "Casprine's iPhone"}      // device_name optional, max 100 chars
 
-200 {"device_id": "<uuid>", "token": "<bearer token, shown once>"}              // same shape as the old Apple response
+200 {"device_id": "<uuid>", "token": "<bearer token, shown once>", "setup_step": "domains|gmail|done"}
 ```
+`setup_step` is optional (C-19): where first-run setup stands, computed from server state. `domains` = no business exists yet, `gmail` = a business exists but Gmail is not connected, `done` = Gmail is connected (importing old mail is optional and does not gate `done`). Treat a missing or unknown value as "unknown" and fall back to your own guess. Gmail connect now asks for both `gmail.modify` and `gmail.settings.basic` in one consent (D-015); nothing changes in the app flow.
 Store `token` in the Keychain and send it as `Authorization: Bearer <token>` exactly as before. Do not keep the password. Device tokens, `DELETE /v1/devices/{id}` (revoke), the per-device rate limit (429 `rate_limited`, `Retry-After: 1`) and `Idempotency-Key` behave exactly as before. Devices paired before this change keep working.
 
 Errors (all `application/problem+json`, `code` is stable):

@@ -222,7 +222,7 @@ func TestConnectCallbackStatusDisconnect(t *testing.T) {
 	u, _ := url.Parse(m["auth_url"].(string))
 	q := u.Query()
 	if u.Host != strings.TrimPrefix(e.fake.URL, "http://") || q.Get("code_challenge_method") != "S256" ||
-		q.Get("access_type") != "offline" || q.Get("client_id") != "cid" || q.Get("scope") != ScopeModify ||
+		q.Get("access_type") != "offline" || q.Get("client_id") != "cid" || q.Get("scope") != ScopeModify+" "+ScopeSettings ||
 		q.Get("redirect_uri") != "http://app.test/oauth/google/callback" || q.Get("state") == "" {
 		t.Fatalf("auth url wrong: %s", u)
 	}

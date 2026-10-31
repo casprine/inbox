@@ -44,7 +44,7 @@ public struct HealthScreen: View {
             StatusDot(kind(c.state))
             if route != nil { Image(systemName: "chevron.right").font(.system(size: 14, weight: .semibold)).foregroundStyle(p.hairlineStrong) }
         }
-        .padding(.horizontal, 16).frame(minHeight: 60).contentShape(Rectangle())
+        .padding(.horizontal, 16).padding(.vertical, 12).frame(minHeight: 60).contentShape(Rectangle())
         .overlay(alignment: .bottom) { if divider { Rectangle().fill(p.hairline).frame(height: 1).padding(.leading, 16) } }
         return Group {
             if let route { Button { onOpen(route) } label: { content }.buttonStyle(.plain).accessibilityHint("Opens the fix") } else { content }
@@ -109,7 +109,8 @@ public struct AppearanceScreen: View {
 public struct AboutScreen: View {
     @Environment(\.palette) private var p
     let env: AppEnvironment
-    public init(env: AppEnvironment) { self.env = env }
+    let openLicence: () -> Void
+    public init(env: AppEnvironment, openLicence: @escaping () -> Void = {}) { self.env = env; self.openLicence = openLicence }
     private var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "" }
     private var build: String { Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "" }
     public var body: some View {
@@ -119,6 +120,13 @@ public struct AboutScreen: View {
                     InsetRow("Version") { Text(version).font(.inboxBody(16)).foregroundStyle(p.secondary) }
                     InsetRow("Build") { Text(build).font(.inboxBody(16)).foregroundStyle(p.secondary) }
                     InsetRow("Server", showsDivider: false) { Text(env.api.baseURL.host ?? env.api.baseURL.absoluteString).font(.inboxBody(16)).foregroundStyle(p.secondary) }
+                }
+                InsetGroup {
+                    Button(action: openLicence) {
+                        InsetRow("Open Runde", subtitle: "SIL Open Font License", showsDivider: false) {
+                            Image(systemName: "chevron.right").font(.system(size: 14, weight: .semibold)).foregroundStyle(p.hairlineStrong)
+                        }
+                    }.buttonStyle(.plain)
                 }
                 // Open Runde ships under the SIL Open Font License 1.1; the licence text is bundled as OFL.txt.
                 Text("Typeface: Open Runde, used under the SIL Open Font License.").font(.inboxBody(13, relativeTo: .footnote)).foregroundStyle(p.secondary)
@@ -158,7 +166,7 @@ public struct AlfatherScreen: View {
 
     private var setup: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Connect Alfather").font(.inboxHeading(28, relativeTo: .title)).foregroundStyle(p.text)
+            Text("Connect Alfather").font(.inboxHeadingBold(27, relativeTo: .title2)).tracking(-0.5).foregroundStyle(p.text)
             Text("Alfather is your local assistant. Inbox pairs the two once; after that Alfather connects to your Inbox server and reads new mail in the background.")
                 .font(.inboxBody(15)).lineSpacing(3).foregroundStyle(p.secondary)
             InsetGroup("Steps") {
@@ -179,7 +187,7 @@ public struct AlfatherScreen: View {
                 InsetRow("Waiting to be read", showsDivider: false) { Text("\(model.status.waiting)").font(.inboxBody(16)).foregroundStyle(p.secondary) }
             }
             Button { Task { await model.unpair() } } label: {
-                Text("Unpair Alfather").font(.inboxBody(16.5)).foregroundStyle(p.destructive).frame(maxWidth: .infinity, minHeight: 52).contentShape(Rectangle())
+                Text("Unpair Alfather").font(.inboxBody(16.5)).foregroundStyle(p.accentText).frame(maxWidth: .infinity, minHeight: 52).contentShape(Rectangle())
             }.buttonStyle(.plain)
             note
         }
@@ -205,7 +213,7 @@ public struct AlfatherScreen: View {
     }
     private func header(_ title: String, _ sub: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.inboxHeading(28, relativeTo: .title)).foregroundStyle(p.text)
+            Text(title).font(.inboxHeadingBold(27, relativeTo: .title2)).tracking(-0.5).foregroundStyle(p.text)
             Text(sub).font(.inboxBody(15)).foregroundStyle(p.secondary)
         }
     }

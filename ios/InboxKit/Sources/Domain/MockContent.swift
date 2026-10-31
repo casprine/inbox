@@ -9,6 +9,8 @@ public enum MockContent {
     public static let invoiceID = MockData.messageID(1)
     public static let threadID = MockData.messageID(2)
     public static let kettleID = MockData.messageID(13)
+    /// A message Gmail does not have (MS09): "Statement ready".
+    public static let notFoundID = MockData.messageID(9)
     public static func attachmentID(_ n: Int) -> UUID { UUID(uuidString: String(format: "00000000-0000-4000-8000-0000000000B%01d", n))! }
 
     static let pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -87,7 +89,7 @@ public enum MockContent {
         return MockData.messages().first { $0.id == id } ?? threadRecords().first { $0.id == id }
     }
 
-    static func threadRecords(now: Date = .now) -> [MessageRecord] {
+    static func threadRecords(now: Date = AppClock.now) -> [MessageRecord] {
         let day: TimeInterval = 86400
         func m(_ n: Int, _ out: Bool, _ name: String, _ ago: TimeInterval, _ snippet: String) -> MessageRecord {
             MessageRecord(id: MockData.messageID(n), businessId: MockData.acme, direction: out ? "out" : "in",
@@ -103,7 +105,7 @@ public enum MockContent {
     }
 
     static func detail(_ id: UUID) -> [String: Any] {
-        let rec = record(id) ?? MessageRecord(id: id, businessId: MockData.acme, receivedAt: .now)
+        let rec = record(id) ?? MessageRecord(id: id, businessId: MockData.acme, receivedAt: AppClock.now)
         var thread: [[String: Any]] = [messageObject(rec)]
         if id == threadID { thread = (threadRecords() + [rec]).map(messageObject) }
         var attachments: [[String: Any]] = []
@@ -120,7 +122,9 @@ public enum MockContent {
             "details": [
                 "business": biz, "address": "\(rec.toLocal ?? "hello")@\(biz["domain"] as? String ?? "acme-studio.com")",
                 "rule_name": "Invoices", "gmail_id": "18f2a1c0de",
-                "gmail": ["state": "synced", "last_error": NSNull(), "last_synced_at": iso(rec.receivedAt.addingTimeInterval(60))],
+                "gmail": id == notFoundID
+                    ? ["state": "not_found", "last_error": "Gmail has no message with this ID.", "last_synced_at": NSNull()] as [String: Any]
+                    : ["state": "synced", "last_error": NSNull(), "last_synced_at": iso(rec.receivedAt.addingTimeInterval(60))],
                 "labels": ["Acme/Invoices"], "size_bytes": 98_304, "received_at": iso(rec.receivedAt),
             ] as [String: Any],
         ]

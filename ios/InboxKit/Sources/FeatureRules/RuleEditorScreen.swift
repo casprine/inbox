@@ -9,12 +9,15 @@ public struct RuleEditorScreen: View {
     @Environment(\.dismiss) private var dismiss
     @State private var model: RuleEditorModel
     @State private var showLabels = false
+    @State private var confirmingDelete: Bool
     @Binding var path: [RuleRoute]
     private let env: AppEnvironment
 
-    public init(env: AppEnvironment, draft: RuleDraft, path: Binding<[RuleRoute]>) {
+    /// `previewDelete` opens the RU10 confirmation at once, for snapshots.
+    public init(env: AppEnvironment, draft: RuleDraft, path: Binding<[RuleRoute]>, previewDelete: Bool = false) {
         self.env = env; _path = path
         _model = State(initialValue: RuleEditorModel(env: env, draft: draft))
+        _confirmingDelete = State(initialValue: previewDelete)
     }
 
     public var body: some View {
@@ -40,7 +43,7 @@ public struct RuleEditorScreen: View {
                     }
                     RuleFieldRow("Subject", error: model.subjectError(), divider: false) {
                         TextField("Any", text: $model.draft.subject).textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .foregroundStyle(model.subjectError() == nil ? p.text : p.destructive)
+                            .foregroundStyle(model.subjectError() == nil ? p.text : p.accentText)
                     }
                 }
                 InsetGroup("Then in Gmail") {
@@ -59,18 +62,19 @@ public struct RuleEditorScreen: View {
                     RuleSwitchRow("Label only", caption: "Don't archive or mark read, even if set", divider: false, isOn: $model.draft.labelOnly)
                 }
                 PrimaryButton("Test against recent mail", style: .secondary) { path.append(.test(model.draft)) }
-                if let why = model.saveBlockedReason, model.draft.hasName || !model.isNew {
-                    Text(why).font(.inboxBody(14, relativeTo: .subheadline)).foregroundStyle(p.destructive)
+                    .disabled(model.subjectError() != nil)
+                if let why = model.saveBlockedReason, why != model.subjectError(), model.draft.hasName || !model.isNew {   // the pattern error already sits under its field (DD-13)
+                    Text(why).font(.inboxBody(14, relativeTo: .subheadline)).foregroundStyle(p.accentText)
                 }
                 if !model.isNew {
-                    PrimaryButton("Delete rule", style: .destructive) { Task { await delete() } }
+                    PrimaryButton("Delete rule", style: .destructive) { confirmingDelete = true }
                 }
             }
             .padding(16).padding(.bottom, 24)
         }
         .scrollDismissesKeyboard(.interactively)
         .background(p.ground)
-        .navigationTitle(model.title).inboxNavigationChrome()
+        .inboxCentredTitle(model.title).inboxNavigationChrome()
         .toolbar {
             ToolbarItem(placement: .topBarLeading) { InboxToolbarButton("Cancel") { dismiss() } }.inboxFlat()
             ToolbarItem(placement: .topBarTrailing) {
@@ -82,6 +86,10 @@ public struct RuleEditorScreen: View {
             LabelPickerSheet(provider: env.labels, selection: $model.draft.label)
                 .presentationDetents([.large]).presentationDragIndicator(.hidden).environment(\.palette, p)
         }
+        .alert("Delete “\(model.title)”?", isPresented: $confirmingDelete) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) { Task { await delete() } }
+        } message: { Text("Mail already sorted keeps its Gmail labels. New mail will fall to the next rule or Unrouted.") }
         .onChange(of: model.draft) { model.edited() }
         .task { await model.load() }
     }

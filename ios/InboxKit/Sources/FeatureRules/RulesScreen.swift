@@ -7,17 +7,19 @@ import Persistence
 public struct RulesScreen: View {
     @Environment(\.palette) private var p
     @State private var model: RulesListModel
-    @State private var editMode: EditMode = .inactive
+    @State private var editMode: EditMode
     @Environment(\.dynamicTypeSize) private var typeSize
     @State private var path: [RuleRoute] = []
     private let env: AppEnvironment
     private let live: Int
     private let importScreen: AnyView
+    private let previewDelete: Bool
 
-    /// `live` is a tick that triggers a refetch (SSE); pass 0 when offline.
-    public init<Import: View>(env: AppEnvironment, live: Int = 0, @ViewBuilder importScreen: () -> Import) {
-        self.env = env; self.live = live; self.importScreen = AnyView(importScreen())
+    /// `live` is a tick that triggers a refetch (SSE); pass 0 when offline. `startEditing` / `previewDelete` open RU02 / RU10 for snapshots.
+    public init<Import: View>(env: AppEnvironment, live: Int = 0, startEditing: Bool = false, previewDelete: Bool = false, @ViewBuilder importScreen: () -> Import) {
+        self.env = env; self.live = live; self.importScreen = AnyView(importScreen()); self.previewDelete = previewDelete
         _model = State(initialValue: RulesListModel(env: env))
+        _editMode = State(initialValue: startEditing ? .active : .inactive)
     }
 
     public var body: some View {
@@ -43,7 +45,11 @@ public struct RulesScreen: View {
             Text("“\(r.name)” stops sorting mail. Mail it already moved stays where it is.")
         }
         .task { await model.observe() }
-        .task { await model.refresh(); if UserDefaults.standard.bool(forKey: "OpenImport"), path.isEmpty { path = [.importFilters] } }
+        .task {
+            await model.refresh()
+            if UserDefaults.standard.bool(forKey: "OpenImport"), path.isEmpty { path = [.importFilters] }
+            if previewDelete { model.pendingDelete = model.rules.first }
+        }
         .task(id: live) { if live > 0 { await model.refresh() } }
     }
 
@@ -62,29 +68,33 @@ public struct RulesScreen: View {
                 Spacer()
             }
         } else if editMode == .active {
-            // RU02: List only here, for drag-to-reorder and swipe-to-delete.
+            // RU02 (DD-12): the title and its subtitle sit above the List at the normal position; the List is only here for
+            // drag-to-reorder and swipe-to-delete.
+            VStack(alignment: .leading, spacing: 0) {
+            axAction
+            PageTitle("Rules", subtitle: "Order is priority: the first rule that matches wins. Drag to reorder.").padding(.top, typeSize.isAccessibilitySize ? -8 : 0)
             List {
-                PageTitle("Rules").plain()
                 Section {
                     editAction("New rule") { path.append(.editor(RuleDraft())) }
                     editAction("Import from Gmail filters") { path.append(.importFilters) }
                 }
                 .listRowBackground(p.card)
                 Section {
-                    ForEach(model.rules) { r in row(r) }
+                    ForEach(model.rules) { r in row(r).listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16)) }
                         .onMove { from, to in Task { await model.move(from: from, to: to) } }
                         .onDelete { offsets in model.pendingDelete = offsets.first.map { model.rules[$0] } }
-                } footer: {
-                    Text("The first rule that matches wins. Drag to change priority.").font(.inboxBody(13.5)).foregroundStyle(p.secondary)
                 }
                 .listRowBackground(p.card)
             }
             .listStyle(.insetGrouped).scrollContentBackground(.hidden)
+            .environment(\.editMode, $editMode)   // on the List itself: the reorder handles and delete controls only show when it reads the mode directly
+            }
         } else {
             // RU01: title, search field and one inset card at the board's 16/20 pt metrics.
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    PageTitle("Rules")
+                    axAction
+                    PageTitle("Rules").padding(.top, typeSize.isAccessibilitySize ? -8 : 0)
                     VStack(alignment: .leading, spacing: 12) {
                         if let n = model.notice { Banner(.warning, title: n) }
                         if model.refreshFailed { Banner(.warning, title: "Couldn't refresh", message: "Showing what's saved on this phone.") }
@@ -147,16 +157,26 @@ public struct RulesScreen: View {
                     .accessibilityLabel("\(r.name) enabled")
             }
         }
-        .padding(.vertical, 9).frame(minHeight: 60)
+        .padding(.vertical, editMode == .active ? 8 : 9).frame(minHeight: editMode == .active ? 56 : 60)   // RU02: rows are 56 pt minimum
         .accessibilityElement(children: .contain)
     }
 
+    /// Toolbar items stop scaling with Dynamic Type, so from AX1 Edit/Done sits in the content above the title (as on Businesses).
+    @ViewBuilder private var axAction: some View {
+        if typeSize.isAccessibilitySize && !model.rules.isEmpty {
+            HStack {
+                Spacer()
+                InboxToolbarButton(editMode == .active ? "Done" : "Edit") { withAnimation { editMode = editMode == .active ? .inactive : .active } }
+            }.padding(.horizontal, 20)
+        }
+    }
+
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        if !model.rules.isEmpty {
+        if !model.rules.isEmpty && !typeSize.isAccessibilitySize {
             ToolbarItem(placement: .topBarTrailing) {
                 InboxToolbarButton(editMode == .active ? "Done" : "Edit") { withAnimation { editMode = editMode == .active ? .inactive : .active } }
             }.inboxFlat()
-        } else {
+        } else if model.rules.isEmpty {
             ToolbarItem(placement: .topBarTrailing) {
                 InboxToolbarButton("New") { path.append(.editor(RuleDraft())) }
             }.inboxFlat()

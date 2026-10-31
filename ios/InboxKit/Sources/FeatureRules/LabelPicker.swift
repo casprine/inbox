@@ -45,7 +45,7 @@ public struct LabelPickerSheet: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            SheetHeader("Label in Gmail", trailingTitle: "Done") { dismiss() }
+            SheetHeader("Gmail label", trailingTitle: "Done") { dismiss() }
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(p.secondary)
                 TextField("Search or create a label", text: $model.query)

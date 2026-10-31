@@ -67,6 +67,8 @@ private struct OnboardingGate: View {
             }
             #endif
             let dev = DevConfig.token
+            // Set up before, server address remembered, token gone (revoked while the app was closed): open signed out, not at Welcome.
+            if dev == nil, await OnboardingState.hasLostSession(env: env) { env.session.markSignedOut(); state = .app; return }
             state = await OnboardingState.needsOnboarding(env: env, devToken: dev) ? .onboarding : .app
         }
     }
@@ -121,6 +123,7 @@ private struct AppShell: View {
                 // `-OpenSearch` / `-OpenSearchQuery <q>` / `-OpenSearchScope <n>` (1 = Acme) launch into Search.
                 let d = UserDefaults.standard
                 // `-OpenTab rules` / `-OpenUnrouted` / `-OpenFailed` for screenshots.
+                if d.bool(forKey: "SignedOut") { await env.tokenStore.clear(); env.session.markSignedOut() }   // `-SignedOut 1`: the Mail-root "You've been signed out" banner
                 if d.string(forKey: "OpenTab") == "rules" { tab = .rules }
                 if d.string(forKey: "OpenTab") == "settings" { tab = .settings }
                 if d.bool(forKey: "OpenBusiness") { path = [.business(MockData.acme, address: nil)] }
@@ -135,8 +138,19 @@ private struct AppShell: View {
                 }
             } else { await env.outbox.start() }
         }
-        .task { if !useMockData { await live.run(env.sse, onGmail: { env.gmail.apply($0) }, onJob: { env.backfill.apply($0) }) } }
-        .task { await env.gmail.refresh(env.api); await env.backfill.refresh(env.api) }
+        // Restarts after a re-sign-in (epoch); while signed out the stream ends at once instead of reconnecting.
+        .task(id: env.session.epoch) {
+            guard !useMockData, !env.session.isSignedOut else { return }
+            await live.run(env.sse, onGmail: { env.gmail.apply($0) }, onJob: { env.backfill.apply($0) })
+        }
+        .task(id: env.session.epoch) {
+            guard !env.session.isSignedOut else { return }
+            await env.gmail.refresh(env.api); await env.backfill.refresh(env.api)
+            if env.session.epoch > 0 && !useMockData { live.handle(.reconnected); await env.outbox.flush() }   // after a re-sign-in: refetch, send what was queued
+        }
+        .fullScreenCover(isPresented: Binding(get: { env.session.isSigningIn }, set: { env.session.isSigningIn = $0 })) {
+            SessionSignInScreen(env: env) { env.session.isSigningIn = false }.inboxTheme(ThemeMode(rawValue: env.theme.raw) ?? .system)
+        }
         .task {
             // Retention: the server keeps mail for `retention_days`; saved message copies older than that go too.
             if let raw = (try? await env.database.pref(PrefsSync.retentionKey)) ?? nil, let days = Int(raw), days > 0 {
@@ -193,6 +207,6 @@ struct PlaceholderScreen: View {
     var body: some View {
         VStack { Spacer(); EmptyState(title: title, message: message); Spacer() }
             .frame(maxWidth: .infinity).background(p.ground)
-            .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
+            .inboxCentredTitle(title)
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import API
+import Domain
 import Persistence
 
 /// Senders whose remote images the user chose to load. Local pref for now; server prefs come with T27.
@@ -59,12 +60,12 @@ public struct RawMessage: Sendable, Equatable {
 }
 
 enum MessageFormat {
-    static func clock(_ date: Date, now: Date = .now, calendar: Calendar = .current) -> String {
+    static func clock(_ date: Date, now: Date = AppClock.now, calendar: Calendar = .current) -> String {
         let f = DateFormatter(); f.calendar = calendar; f.timeZone = calendar.timeZone; f.locale = .current
         f.setLocalizedDateFormatFromTemplate(calendar.isDate(date, inSameDayAs: now) ? "jmm" : "MMMd jmm")
         return f.string(from: date)
     }
-    static func day(_ date: Date, now: Date = .now, calendar: Calendar = .current) -> String {
+    static func day(_ date: Date, now: Date = AppClock.now, calendar: Calendar = .current) -> String {
         let f = DateFormatter(); f.calendar = calendar; f.timeZone = calendar.timeZone; f.locale = .current
         if calendar.isDate(date, inSameDayAs: now) { f.setLocalizedDateFormatFromTemplate("jmm") }
         else if let d = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day, d < 7 { f.setLocalizedDateFormatFromTemplate("EEE") }

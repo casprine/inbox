@@ -1,9 +1,10 @@
 import SwiftUI
 import DesignSystem
+import Domain
 
 public enum RuleFormat {
     /// "9:41" today, weekday within a week, otherwise "Sep 28".
-    public static func when(_ d: Date, now: Date = .now, calendar: Calendar = .current) -> String {
+    public static func when(_ d: Date, now: Date = AppClock.now, calendar: Calendar = .current) -> String {
         if calendar.isDate(d, inSameDayAs: now) { return d.formatted(.dateTime.hour().minute()) }
         if let days = calendar.dateComponents([.day], from: d, to: now).day, days < 7, days >= 0 {
             return d.formatted(.dateTime.weekday(.abbreviated))
@@ -15,6 +16,7 @@ public enum RuleFormat {
 /// Form row: fixed-width caption on the left, content on the right, optional inline error underneath.
 public struct RuleFieldRow<Content: View>: View {
     @Environment(\.palette) private var p
+    @Environment(\.dynamicTypeSize) private var typeSize
     let title: String
     let error: String?
     let divider: Bool
@@ -24,13 +26,21 @@ public struct RuleFieldRow<Content: View>: View {
     }
     public var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 12) {
-                Text(title).font(.inboxBody(17)).foregroundStyle(p.secondary).frame(width: 76, alignment: .leading)
-                content.font(.inboxBody(17)).foregroundStyle(p.text).frame(maxWidth: .infinity, alignment: .leading)
+            // Accessibility sizes: the caption sits above its value (a 76 pt column would break "Subject" and "Received" inside the word).
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.inboxBody(17)).foregroundStyle(p.secondary)
+                    content.font(.inboxBody(17)).foregroundStyle(p.text).frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                HStack(spacing: 12) {
+                    Text(title).font(.inboxBody(17)).foregroundStyle(p.secondary).frame(width: 76, alignment: .leading)
+                    content.font(.inboxBody(17)).foregroundStyle(p.text).frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             if let error {
-                Text(error).font(.inboxBody(14, relativeTo: .footnote)).foregroundStyle(p.destructive)
-                    .padding(.leading, 88).accessibilityLabel("Error: \(error)")
+                Text(error).font(.inboxBody(14, relativeTo: .footnote)).foregroundStyle(p.accentText)
+                    .padding(.leading, typeSize.isAccessibilitySize ? 0 : 88).accessibilityLabel("Error: \(error)")
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 8).frame(minHeight: 48)

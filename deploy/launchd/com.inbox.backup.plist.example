@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Nightly Postgres backup on the Mac mini (docs/RUNBOOK.md, "Backups").
+  1. Copy to ~/Library/LaunchAgents/com.inbox.backup.plist and replace /Users/YOU/inbox with the repository path (twice).
+  2. plutil -lint ~/Library/LaunchAgents/com.inbox.backup.plist
+  3. launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.inbox.backup.plist
+  4. Run it once now:  launchctl kickstart -k gui/$(id -u)/com.inbox.backup   then read ~/Library/Logs/inbox-backup.log
+  Remove: launchctl bootout gui/$(id -u)/com.inbox.backup
+  A LaunchAgent runs while you are logged in (the Mac mini should log in automatically, docs/DEPLOY.md). If the Mac was
+  asleep at 03:30 launchd runs the job when it wakes.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.inbox.backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/YOU/inbox/scripts/backup.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/YOU/inbox</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- docker (and aws, for the optional off-site copy) live outside launchd's default PATH -->
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/YOU/Library/Logs/inbox-backup.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOU/Library/Logs/inbox-backup.log</string>
+</dict>
+</plist>

@@ -55,6 +55,32 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(disconnect.waitForExistence(timeout: 5))
     }
 
+    // MARK: Session lost (C-20) and the Open Runde licence (C-21)
+
+    func testSignedOutBannerOpensSignInAgainWithTheSavedAddress() throws {
+        let app = launch(["-SignedOut", "1"])
+        let banner = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS \"You've been signed out\"")).firstMatch
+        XCTAssertTrue(banner.waitForExistence(timeout: 10), "banner on the Mail root")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Acme Studio'")).firstMatch.exists, "cached mail stays readable")
+        app.buttons["Sign in"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Sign in again"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textFields["Server address"].exists)
+        app.buttons["Back"].tap()
+        XCTAssertTrue(app.staticTexts["Businesses"].waitForExistence(timeout: 10), "Back returns to Mail, still signed out")
+        XCTAssertTrue(banner.exists)
+    }
+
+    func testAboutOpensTheOpenRundeLicence() throws {
+        let app = launch(["-OpenTab", "settings", "-OpenSettings", "about"])
+        let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Open Runde'")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        let text = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'SIL OPEN FONT LICENSE'")).firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 10), "the licence text is on screen")
+        for _ in 0..<6 { app.swipeUp() }
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'DISCLAIMER'")).firstMatch.waitForExistence(timeout: 5), "scrolls to the end of the licence")
+    }
+
     // MARK: Onboarding and server sign-in (mock data; mock passwords: "wrong-password", "locked-out", "server-down")
 
     private func label(_ app: XCUIApplication, containing text: String) -> XCUIElement {
@@ -109,6 +135,33 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Which domains are your businesses?"].waitForExistence(timeout: 10))
     }
 
+    /// Mock mode stands in for Google (the sandbox has no Gmail): Continue with Google succeeds, then OB07 "Gmail connected", the filters
+    /// step, the import step, Alfather, and OB12 "You're set up" whose "Open Inbox" ends setup.
+    func testGmailConnectedAndSetUpScreensEndTheFlow() throws {
+        let app = launch(["-Onboarding", "1", "-OnboardingStep", "gmail", "-GmailState", "connected"])
+        app.buttons["Continue with Google"].tap()
+        XCTAssertTrue(app.staticTexts["Gmail connected"].waitForExistence(timeout: 15), "OB07")
+        XCTAssertTrue(app.staticTexts["Step 3 of 7"].exists)
+        XCTAssertTrue(app.staticTexts["Read, label and archive"].exists)
+        XCTAssertTrue(app.staticTexts["You can disconnect at any time in Settings → Gmail."].exists)
+        app.buttons["Continue"].tap()
+        XCTAssertTrue(app.staticTexts["Bring your Gmail filters"].waitForExistence(timeout: 10))
+        app.buttons["Skip"].tap()
+        XCTAssertTrue(app.staticTexts["Import older mail?"].waitForExistence(timeout: 10))
+        app.buttons["Import 90 days"].tap()
+        // Alfather step: "Set up later" when nothing is found (OB11), "Continue" when the mock finds one; Continue is disabled while it searches.
+        let finish = app.buttons.matching(NSPredicate(format: "label == 'Set up later' OR label == 'Continue'")).firstMatch
+        XCTAssertTrue(finish.waitForExistence(timeout: 10))
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: finish)
+        XCTAssertEqual(XCTWaiter().wait(for: [enabled], timeout: 15), .completed)
+        finish.tap()
+        XCTAssertTrue(app.staticTexts["You're set up."].waitForExistence(timeout: 10), "OB12")
+        XCTAssertTrue(label(app, containing: "90 days of mail on its way").exists)
+        XCTAssertFalse(app.buttons["Back"].exists, "no Back on the last screen")
+        app.buttons["Open Inbox"].tap()
+        XCTAssertTrue(app.staticTexts["Businesses"].waitForExistence(timeout: 15), "setup done: Mail root")
+    }
+
     func testSignInErrorsWrongPasswordInvalidAddressLockedAndUnreachable() throws {
         let app = launch(["-Onboarding", "1", "-OpenSignIn", "existing"])
         XCTAssertTrue(app.staticTexts["Welcome back"].waitForExistence(timeout: 10))
@@ -138,6 +191,35 @@ final class SmokeTests: XCTestCase {
         let locked = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Try again in 4 minutes'")).firstMatch
         XCTAssertTrue(locked.waitForExistence(timeout: 5))
         XCTAssertFalse(locked.isEnabled)
+    }
+
+    // MARK: BZ02 reorder by drag (D3)
+
+    /// The Mail-root Edit list: pick up Lumen Hosting's six-dot handle (right edge of its row), drop it on Acme Studio, and the order flips.
+    /// Mock data: `PUT /v1/businesses:order` is answered by the in-app mock, so the new order persists instead of rolling back.
+    /// VoiceOver's "Move up" / "Move down" actions cannot be invoked from XCUITest; they are covered by `BusinessReorderActionsTests` (unit target).
+    func testBusinessesReorderByDragPersists() throws {
+        let app = launch(["-OpenBusinessesEdit", "1"])
+        func row(_ name: String) -> XCUIElement { app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch }
+        let acme = row("Acme Studio"), lumen = row("Lumen Hosting")
+        XCTAssertTrue(acme.waitForExistence(timeout: 10))
+        XCTAssertTrue(lumen.waitForExistence(timeout: 10))
+        XCTAssertLessThan(acme.frame.minY, lumen.frame.minY, "starts as Acme, Northgate, Lumen")
+
+        let handle = lumen.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5))
+        let target = acme.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.25))
+        handle.press(forDuration: 0.8, thenDragTo: target, withVelocity: .slow, thenHoldForDuration: 0.6)
+
+        let moved = NSPredicate { _, _ in row("Lumen Hosting").frame.minY < row("Acme Studio").frame.minY }
+        XCTAssertEqual(XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: moved, object: nil)], timeout: 10), .completed, "Lumen Hosting is now above Acme Studio")
+        XCTAssertFalse(label(app, containing: "back to how it was").exists, "the order was saved, not rolled back")
+
+        // Done leaves Edit; the Mail list shows the new order.
+        app.buttons["Done"].tap()
+        let lumenRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Lumen Hosting'")).firstMatch
+        let acmeRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Acme Studio'")).firstMatch
+        XCTAssertTrue(lumenRow.waitForExistence(timeout: 10))
+        XCTAssertLessThan(lumenRow.frame.minY, acmeRow.frame.minY)
     }
 }
 

@@ -6,13 +6,16 @@ import Domain
 /// Settings → Gmail: GM01 connected, GM03 signed out, GM04 catching up, GM09 rate-limited, GM05 disconnect alert.
 public struct GmailScreen: View {
     @Environment(\.palette) private var p
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var model: GmailModel
     @State private var applyLabels = true
     @State private var applyArchive = true
     private let back: String
+    private let previewDisconnect: Bool
 
-    public init(env: AppEnvironment, back: String = "Settings", authenticator: any WebAuthenticating = SystemWebAuthenticator()) {
-        _model = State(initialValue: GmailModel(env: env, authenticator: authenticator)); self.back = back
+    /// `previewDisconnect` opens the GM05 alert for snapshots.
+    public init(env: AppEnvironment, back: String = "Settings", authenticator: any WebAuthenticating = SystemWebAuthenticator(), previewDisconnect: Bool = false) {
+        _model = State(initialValue: GmailModel(env: env, authenticator: authenticator)); self.back = back; self.previewDisconnect = previewDisconnect
     }
 
     public var body: some View {
@@ -32,11 +35,11 @@ public struct GmailScreen: View {
         .background(p.ground)
         .safeAreaInset(edge: .bottom, spacing: 0) { pinned }
         .inboxPushed(title: "Gmail", back: back)
-        .task { await model.load() }
+        .task { await model.load(); if previewDisconnect { model.confirmingDisconnect = true } }
         .alert("Disconnect Gmail?", isPresented: $model.confirmingDisconnect) {
             Button("Disconnect", role: .destructive) { Task { await model.disconnect() } }
             Button("Cancel", role: .cancel) {}
-        } message: { Text("Inbox stops labelling and archiving in Gmail. Mail still arrives in Gmail and in Inbox.") }
+        } message: { Text("Labels and archive stop. Mail keeps arriving in Gmail and in Inbox.") }
     }
 
     /// Primary action pinned above the tab bar: Continue with Google (not connected) / Reconnect Gmail (signed out).
@@ -58,8 +61,8 @@ public struct GmailScreen: View {
     /// Not connected: same pattern as OB05, Continue with Google pinned at the bottom.
     private var notConnected: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Connect Gmail").font(.inboxHeading(28, relativeTo: .title)).foregroundStyle(p.text)
-            Text("Inbox never sends mail. It needs Gmail only to keep it tidy.").font(.inboxBody(15)).foregroundStyle(p.secondary)
+            Text("Connect Gmail").font(.inboxHeadingBold(27, relativeTo: .title2)).tracking(-0.5).foregroundStyle(p.text)
+            Text("Inbox never sends mail. It needs Gmail only to keep it tidy.").font(.inboxBody(14.5)).foregroundStyle(p.secondary)
             if !status.configured { Banner(.warning, title: "Gmail isn't set up on your server yet", message: "Add the Google client in the server settings first.", systemImage: "exclamationmark.triangle") }
             list("Inbox will", ["Label mail by business and rule", "Archive mail your rules archive", "Import older mail once"])
             list("Inbox won't", ["Send, delete or forward anything", "Share your mail with anyone"])
@@ -86,7 +89,7 @@ public struct GmailScreen: View {
 
     private var connected: some View {
         VStack(alignment: .leading, spacing: 18) {
-            let limited = status.rateLimitedUntil.map { $0 > .now } ?? false
+            let limited = status.rateLimitedUntil.map { $0 > AppClock.now } ?? false
             InsetGroup { account(subline: limited ? "Connected · Paused" : "Connected · Read, label and archive", dot: limited ? .warning : .ok) }
             if limited {
                 Banner(.warning, title: "Gmail is rate-limiting Inbox.",
@@ -121,9 +124,10 @@ public struct GmailScreen: View {
 
     private func account(subline: String, dot: StatusKind) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: "envelope").font(.system(size: 22)).foregroundStyle(p.accent).frame(width: 26)
+            // DD-18.4: at AX1+ the envelope goes and the address may shrink to 0.75 before it is cut in the middle.
+            if !typeSize.isAccessibilitySize { Image(systemName: "envelope").font(.system(size: 22)).foregroundStyle(p.accent).frame(width: 26) }
             VStack(alignment: .leading, spacing: 3) {
-                Text(status.email ?? "Gmail").font(.inboxBody(16.5)).foregroundStyle(p.text)
+                Text(status.email ?? "Gmail").font(.inboxBody(16)).foregroundStyle(p.text).lineLimit(1).minimumScaleFactor(typeSize.isAccessibilitySize ? 0.75 : 1).truncationMode(.middle)
                 HStack(spacing: 6) { StatusDot(dot); Text(subline).font(.inboxBody(14)).foregroundStyle(p.secondary) }
             }
             Spacer()
@@ -134,7 +138,7 @@ public struct GmailScreen: View {
 
     private var disconnectRow: some View {
         Button { model.confirmingDisconnect = true } label: {
-            Text("Disconnect Gmail").font(.inboxBody(16.5)).foregroundStyle(p.destructive).frame(maxWidth: .infinity, minHeight: 56).contentShape(Rectangle())
+            Text("Disconnect Gmail").font(.inboxBody(16.5)).foregroundStyle(p.accentText).frame(maxWidth: .infinity, minHeight: 56).contentShape(Rectangle())
         }.buttonStyle(.plain)
     }
 
@@ -142,7 +146,7 @@ public struct GmailScreen: View {
         InsetRow(title, showsDivider: divider) {
             HStack(spacing: 6) {
                 if warn { StatusDot(.warning) }
-                Text(value).font(.inboxBody(16)).foregroundStyle(p.secondary)
+                Text(value).font(.inboxBody(16)).foregroundStyle(p.secondary).multilineTextAlignment(typeSize.isAccessibilitySize ? .leading : .trailing)
             }
         }
     }

@@ -46,7 +46,7 @@ private func mockEnv() throws -> AppEnvironment {
     @Test func invalidPatternBlocksSaveWithReason() async throws {
         let m = RuleEditorModel(env: try mockEnv(), draft: { var d = RuleDraft(); d.name = "Bad"; d.subject = "order (open"; return d }())
         #expect(!m.canSave)
-        #expect(m.saveBlockedReason == "Pattern isn't valid: missing closing ).")
+        #expect(m.saveBlockedReason == "Missing a closing bracket “)”.")
         m.draft.subject = "order"
         #expect(m.canSave)
         m.draft.name = "  "

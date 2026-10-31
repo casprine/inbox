@@ -29,7 +29,7 @@ public enum MockRules {
 
     private static func iso(_ d: Date) -> String { ISO8601DateFormatter().string(from: d) }
 
-    static func unroutedMessages(now: Date = .now) -> [MessageRecord] {
+    static func unroutedMessages(now: Date = AppClock.now) -> [MessageRecord] {
         let snippets = [201: "Hi, attached is our 2027 wholesale price list for the copper range.", 202: "Hello, we'd like to stock your kettles in our studio shop. Could you send terms?",
                         203: "Thanks, the samples arrived this morning and look great."]
         func m(_ n: Int, _ biz: UUID, _ to: String, _ from: String, _ subject: String, ago: TimeInterval) -> MessageRecord {
@@ -65,8 +65,9 @@ public enum MockRules {
     }
 
     static func failed() -> [String: Any] {
+        if UserDefaults.standard.string(forKey: "FailedState") == "empty" { return ["messages": []] }   // `-FailedState empty` (NA07)
         var m = messageObject(MessageRecord(id: failedID, businessId: MockData.acme, fromAddr: "billing@lumen.host", fromName: "Lumen Hosting",
-                                            subject: "Backup archive", toLocal: "billing", receivedAt: .now.addingTimeInterval(-86_400 * 29),
+                                            subject: "Backup archive", toLocal: "billing", receivedAt: AppClock.now.addingTimeInterval(-86_400 * 29),
                                             threadKey: "f1", route: "unrouted"))
         m["failure_reason"] = "store_failed"; m["env_to"] = "billing@acme-studio.com"; m["size_bytes"] = 4_400_000; m["has_raw"] = false
         return ["messages": [m]]
@@ -91,6 +92,14 @@ public enum MockRules {
             let all = records()
             let ordered = ids.compactMap { id in all.first { $0.id.uuidString.lowercased() == id } } + all.filter { !ids.contains($0.id.uuidString.lowercased()) }
             return ok(["rules": ordered.enumerated().map { i, r in var r = r; r.position = i; return ruleObject(r) }])
+        case ("GET", "/v1/businesses"):
+            return ok(["businesses": MockData.businesses(now: AppClock.now).enumerated().map { i, b in businessObject(b, order: i) }])
+        case ("PUT", "/v1/businesses:order"):
+            // Mock mode: the new business order is accepted (the client applies it to its cache first), so BZ02 drag and Move up/down persist.
+            let ids = ((bodyJSON["ids"] as? [String]) ?? []).map { $0.lowercased() }
+            let all = MockData.businesses(now: AppClock.now)
+            let ordered = ids.compactMap { id in all.first { $0.id.uuidString.lowercased() == id } } + all.filter { !ids.contains($0.id.uuidString.lowercased()) }
+            return ok(["businesses": ordered.enumerated().map { i, b in businessObject(b, order: i) }])
         case ("POST", "/v1/rules"):
             return invalid(bodyJSON) ?? ok(created(bodyJSON, id: UUID()), 201)
         case ("POST", "/v1/rules:test"):
@@ -125,11 +134,11 @@ public enum MockRules {
     /// `-GmailState connected|needs_reauth|catching_up|not_connected` (default connected) picks the mock status.
     static func gmailStatusObject() -> [String: Any] {
         let mode = UserDefaults.standard.string(forKey: "GmailState") ?? "connected"
-        let now = iso(.now), earlier = iso(.now.addingTimeInterval(-3_600))
+        let now = iso(AppClock.now), earlier = iso(AppClock.now.addingTimeInterval(-3_600))
         switch mode {
         case "needs_reauth": return ["state": "needs_reauth", "email": "sam@gmail.com", "connected_at": earlier, "last_write_at": earlier, "waiting": 14, "rate_limited_until": NSNull(), "configured": true]
         case "catching_up": return ["state": "connected", "email": "sam@gmail.com", "connected_at": earlier, "last_write_at": now, "waiting": 5, "rate_limited_until": NSNull(), "configured": true]
-        case "rate_limited": return ["state": "connected", "email": "sam@gmail.com", "connected_at": earlier, "last_write_at": earlier, "waiting": 3, "rate_limited_until": iso(.now.addingTimeInterval(600)), "configured": true]
+        case "rate_limited": return ["state": "connected", "email": "sam@gmail.com", "connected_at": earlier, "last_write_at": earlier, "waiting": 3, "rate_limited_until": iso(AppClock.now.addingTimeInterval(600)), "configured": true]
         case "not_connected": return ["state": "not_connected", "email": NSNull(), "connected_at": NSNull(), "last_write_at": NSNull(), "waiting": 0, "rate_limited_until": NSNull(), "configured": true]
         default: return ["state": "connected", "email": "sam@gmail.com", "connected_at": earlier, "last_write_at": now, "waiting": 0, "rate_limited_until": NSNull(), "configured": true]
         }
@@ -155,9 +164,9 @@ public enum MockRules {
             return ["id": (id ?? UUID(uuidString: "00000000-0000-4000-8000-00000000B\(String(format: "%03d", abs(domain.hashValue) % 1000))")!).uuidString.lowercased(),
                     "business_id": biz.uuidString.lowercased(), "business_name": name, "domain": domain, "since": "2026-07-13", "status": status,
                     "estimated": est, "scanned": mode == "done" ? est : scanned, "imported": mode == "done" ? est - 12 : scanned - 8, "sorted": sorted, "unrouted": unrouted, "skipped": 8,
-                    "paused_until": mode == "paused" ? iso(.now.addingTimeInterval(600)) : NSNull(), "pause_reason": mode == "paused" ? "rate_limited" : NSNull(),
-                    "last_error": NSNull(), "created_at": iso(.now.addingTimeInterval(-3_600)), "started_at": iso(.now.addingTimeInterval(-3_500)),
-                    "finished_at": mode == "done" ? iso(.now.addingTimeInterval(-600)) : NSNull()]
+                    "paused_until": mode == "paused" ? iso(AppClock.now.addingTimeInterval(600)) : NSNull(), "pause_reason": mode == "paused" ? "rate_limited" : NSNull(),
+                    "last_error": NSNull(), "created_at": iso(AppClock.now.addingTimeInterval(-3_600)), "started_at": iso(AppClock.now.addingTimeInterval(-3_500)),
+                    "finished_at": mode == "done" ? iso(AppClock.now.addingTimeInterval(-600)) : NSNull()]
         }
         return [b(MockData.acme, "Acme Studio", "acme-studio.com", est: 1_600, scanned: 760, sorted: 700, unrouted: 52),
                 b(MockData.northgate, "Northgate Ltd", "northgate.co", est: 900, scanned: 400, sorted: 360, unrouted: 32),
@@ -178,14 +187,19 @@ public enum MockRules {
             checks.append(c("gmail", "Gmail", "error", "Signed out · 14 waiting", fix: "gmail"))
         } else { checks.append(c("gmail", "Gmail", "ok", "Connected")) }
         checks.append(c("queue", "Queue", bad ? "warn" : "ok", bad ? "14 waiting" : "Nothing waiting"))
-        return ["state": bad ? "needs_you" : "ok", "checked_at": iso(.now.addingTimeInterval(-60)), "checks": checks]
+        return ["state": bad ? "needs_you" : "ok", "checked_at": iso(AppClock.now.addingTimeInterval(-60)), "checks": checks]
+    }
+    static func businessObject(_ b: BusinessRecord, order i: Int) -> [String: Any] {
+        ["id": b.id.uuidString.lowercased(), "name": b.name, "domain": b.domain, "sort_order": i, "hidden": b.hidden, "enabled": b.enabled, "routing": b.routing,
+         "unread": b.unread, "last_message_at": b.lastMessageAt.map { iso($0) } ?? NSNull(),
+         "addresses": (try? JSONSerialization.jsonObject(with: Data(b.addressesJSON.utf8))) ?? []]
     }
     /// `-AlfatherState not_paired|connected|reconnecting|unreachable` (default connected).
     static func alfatherObject() -> [String: Any] {
         let mode = UserDefaults.standard.string(forKey: "AlfatherState") ?? "connected"
         let paired = mode != "not_paired"
-        let seen: Date = mode == "unreachable" ? .now.addingTimeInterval(-86_400) : mode == "reconnecting" ? .now.addingTimeInterval(-420) : .now
-        return ["paired": paired, "connected": mode == "connected", "paired_at": paired ? iso(.now.addingTimeInterval(-86_400 * 3)) : NSNull(),
+        let seen: Date = mode == "unreachable" ? AppClock.now.addingTimeInterval(-86_400) : mode == "reconnecting" ? AppClock.now.addingTimeInterval(-420) : AppClock.now
+        return ["paired": paired, "connected": mode == "connected", "paired_at": paired ? iso(AppClock.now.addingTimeInterval(-86_400 * 3)) : NSNull(),
                 "last_seen_at": paired ? iso(seen) : NSNull(), "waiting": mode == "unreachable" ? 41 : 0, "cursor_seq": 120, "mcp_url": paired ? "https://inbox.example.com/mcp" : NSNull()]
     }
 
@@ -209,7 +223,7 @@ public enum MockRules {
         }
         if method == "POST", path.hasPrefix("/v1/businesses/"), path.hasSuffix("/routing:check") {
             let id = String(path.dropFirst("/v1/businesses/".count).dropLast("/routing:check".count))
-            return ok(["business_id": id, "routing": "ok", "checked_at": iso(.now)])
+            return ok(["business_id": id, "routing": "ok", "checked_at": iso(AppClock.now)])
         }
         if method == "POST", path.hasPrefix("/v1/backfills/") {
             let id = String(path.dropFirst("/v1/backfills/".count).split(separator: ":").first ?? "")
@@ -218,7 +232,7 @@ public enum MockRules {
         switch (method, path) {
         case ("GET", "/v1/prefs"): return ok(["retention_days": 365, "image_allow_senders": [], "preview_lines": 2])
         case ("PUT", "/v1/prefs"): return ok(["retention_days": 365, "image_allow_senders": [], "preview_lines": 2])
-        case ("POST", "/v1/data:confirm"): return ok(["token": "DELETE-4F7K2M9Q", "expires_at": iso(.now.addingTimeInterval(300)), "expires_in": 300])
+        case ("POST", "/v1/data:confirm"): return ok(["token": "DELETE-4F7K2M9Q", "expires_at": iso(AppClock.now.addingTimeInterval(300)), "expires_in": 300])
         case ("DELETE", "/v1/data"): return ok(["deleted_messages": 120, "deleted_blobs": 240])
         case ("GET", "/v1/backfills:estimate"):
             let days = URLComponents(string: "x://x?\(query ?? "")")?.queryItems?.first { $0.name == "days" }?.value.flatMap(Int.init) ?? 90

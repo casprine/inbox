@@ -104,7 +104,8 @@ enum Snapshot {
     static func check<V: View>(_ name: String, settle: Duration = .milliseconds(1_200), typeSize: DynamicTypeSize? = nil, height: CGFloat = 844, file: String = #filePath, line: Int = #line,
                                _ make: () -> V) async {
         for scheme in [ColorScheme.light, .dark] {
-            let image = await render(make().environment(\.dynamicTypeSize, typeSize ?? .large), scheme: scheme, settle: settle, height: height)
+            // en_US so grouping separators ("1,100") don't follow whichever locale the simulator has (H-12).
+            let image = await render(make().environment(\.dynamicTypeSize, typeSize ?? .large).environment(\.locale, Locale(identifier: "en_US")), scheme: scheme, settle: settle, height: height)
             if let failure = compare(image, name: name, scheme: scheme, file: file) {
                 Issue.record(Comment(rawValue: failure), sourceLocation: SourceLocation(fileID: "InboxTests/Snapshot", filePath: file, line: line, column: 1))
             }

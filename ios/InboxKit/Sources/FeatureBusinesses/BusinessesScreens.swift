@@ -71,52 +71,83 @@ public struct BusinessesSettingsScreen: View {
 }
 
 /// BZ02: drag to reorder and a switch per business to hide it from Mail. Shared by Settings → Businesses and the Mail root.
+/// One inset card (radius 12, 16 pt margin); each row ends with the board's 48 x 28 switch and a 6-dot handle. The handle is the drag
+/// source (`draggable`), every row is a drop target; VoiceOver gets "Move up" / "Move down" instead.
 public struct BusinessEditList: View {
     @Environment(\.palette) private var p
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var targeted: UUID?
     let model: BusinessesSettingsModel
     public init(model: BusinessesSettingsModel) { self.model = model }
 
-    /// One card: rounded only at the top of the first row and the bottom of the last, 16 pt from the screen edges (BZ02, radius 12).
-    private func card(_ i: Int, _ n: Int) -> some View {
-        UnevenRoundedRectangle(topLeadingRadius: i == 0 ? 12 : 0, bottomLeadingRadius: i == n - 1 ? 12 : 0,
-                               bottomTrailingRadius: i == n - 1 ? 12 : 0, topTrailingRadius: i == 0 ? 12 : 0, style: .continuous)
-            .fill(p.card).padding(.horizontal, 16)
+    public var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Order here is the order on the Mail tab. Drag to reorder; switch off to hide a business from Mail.")
+                    .font(.inboxBody(13.5)).foregroundStyle(p.secondary).padding(.horizontal, 20).padding(.vertical, 8)
+                if let n = model.notice { Banner(.warning, title: n, systemImage: "exclamationmark.triangle").padding(.horizontal, 16) }
+                let all = model.businesses
+                VStack(spacing: 0) {
+                    ForEach(Array(all.enumerated()), id: \.element.id) { i, b in row(b, index: i, all: all) }
+                }
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(p.card))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(.horizontal, 16)
+            }
+            .padding(.bottom, 24)
+        }
+        .background(p.ground)
     }
 
-    public var body: some View {
-        List {
-            Text("Order here is the order on the Mail tab. Drag to reorder; switch off to hide a business from Mail.")
-                .font(.inboxBody(13.5)).foregroundStyle(p.secondary).padding(.horizontal, 20).padding(.vertical, 8)
-                .listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden)
-            if let n = model.notice {
-                Banner(.warning, title: n, systemImage: "exclamationmark.triangle").padding(.horizontal, 16)
-                    .listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden)
+    private func row(_ b: BusinessRecord, index i: Int, all: [BusinessRecord]) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(b.name).font(.inboxBody(16)).foregroundStyle(p.text).fixedSize(horizontal: false, vertical: true)
+                Text(b.domain).font(.inboxBody(13.5, relativeTo: .subheadline)).foregroundStyle(p.secondary)
+                    .lineLimit(1).truncationMode(.middle)
             }
-            let all = model.businesses
-            ForEach(Array(all.enumerated()), id: \.element.id) { i, b in
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(b.name).font(.inboxBody(16.5)).foregroundStyle(p.text)
-                        Text(b.domain).font(.inboxBody(14)).foregroundStyle(p.secondary)
-                    }
-                    Spacer(minLength: 8)
-                    SquareSwitch(isOn: Binding(get: { !b.hidden }, set: { on in Task { await model.setHidden(!on, b) } }))
-                        .accessibilityLabel("Show \(b.name) in Mail")
+            Spacer(minLength: 8)
+            SquareSwitch(isOn: Binding(get: { !b.hidden }, set: { on in Task { await model.setHidden(!on, b) } }))
+                .accessibilityLabel("Show \(b.name) in Mail")
+            DragHandle()
+                .frame(width: 32, height: 44).contentShape(Rectangle())
+                .draggable(b.id.uuidString) {
+                    Text(b.name).font(.inboxBody(16)).foregroundStyle(p.text).padding(.horizontal, 16).padding(.vertical, 12)
+                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(p.card))
                 }
-                .padding(.horizontal, 32).frame(minHeight: 56)
-                .overlay(alignment: .bottom) { if i < all.count - 1 { Rectangle().fill(p.hairline).frame(height: 1).padding(.leading, 32).padding(.trailing, 16) } }
-                .accessibilityElement(children: .combine)
-                .accessibilityActions {
-                    if model.canMove(b, by: -1) { Button("Move up") { Task { await model.move(b, by: -1) } } }
-                    if model.canMove(b, by: 1) { Button("Move down") { Task { await model.move(b, by: 1) } } }
-                }
-                .listRowInsets(EdgeInsets()).listRowSeparator(.hidden).listRowBackground(card(i, all.count))
-            }
-            .onMove { f, t in Task { await model.move(from: f, to: t) } }
+                .accessibilityHidden(true)
         }
-        .listStyle(.plain).scrollContentBackground(.hidden).background(p.ground)
-        .environment(\.defaultMinListRowHeight, 56)
-        .environment(\.editMode, .constant(.active))
+        .padding(.leading, 16).padding(.trailing, 8).frame(minHeight: 56)
+        .background(targeted == b.id ? p.highlight : Color.clear)
+        .overlay(alignment: .bottom) { if i < all.count - 1 { Rectangle().fill(p.hairline).frame(height: 1).padding(.leading, 16) } }
+        .dropDestination(for: String.self) { items, _ in
+            guard let raw = items.first, let from = all.firstIndex(where: { $0.id.uuidString == raw }), from != i else { return false }
+            Task { await model.move(from: IndexSet(integer: from), to: i > from ? i + 1 : i) }
+            return true
+        } isTargeted: { on in
+            if on { targeted = b.id } else if targeted == b.id { targeted = nil }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityActions {
+            if model.canMove(b, by: -1) { Button("Move up") { Task { await model.move(b, by: -1) } } }
+            if model.canMove(b, by: 1) { Button("Move down") { Task { await model.move(b, by: 1) } } }
+        }
+    }
+}
+
+/// The board's 6-dot drag handle (`M9 7h.01M15 7h.01…`, 22 pt, `hairlineStrong`).
+struct DragHandle: View {
+    @Environment(\.palette) private var p
+    var body: some View {
+        Canvas { ctx, size in
+            let k = 22.0 / 24.0, ox = (size.width - 22) / 2, oy = (size.height - 22) / 2
+            for y in [7.0, 12, 17] {
+                for x in [9.0, 15] {
+                    let c = CGPoint(x: ox + x * k, y: oy + y * k)
+                    ctx.fill(Path(ellipseIn: CGRect(x: c.x - 1.5, y: c.y - 1.5, width: 3, height: 3)), with: .color(p.hairlineStrong))
+                }
+            }
+        }
     }
 }
 
@@ -163,7 +194,7 @@ public struct BusinessDetailScreen: View {
                         InsetGroup("Addresses seen") {
                             ForEach(Array(model.addresses.enumerated()), id: \.offset) { i, a in
                                 InsetRow("\(a.localPart)@", showsDivider: i < model.addresses.count - 1) {
-                                    Text(a.count.formatted()).font(.inboxBody(16)).foregroundStyle(p.secondary)
+                                    Text(a.count.formatted()).font(.inboxBody(16)).monospacedDigit().foregroundStyle(p.secondary)
                                 }
                             }
                         }
@@ -175,7 +206,7 @@ public struct BusinessDetailScreen: View {
                     }
                     InsetGroup {
                         Button { model.confirmingRemove = true } label: {
-                            Text("Remove business").font(.inboxBody(16.5)).foregroundStyle(p.destructive).frame(maxWidth: .infinity, minHeight: 56).contentShape(Rectangle())
+                            Text("Remove business").font(.inboxBody(16.5)).foregroundStyle(p.accentText).frame(maxWidth: .infinity, minHeight: 56).contentShape(Rectangle())
                         }.buttonStyle(.plain)
                     }
                 } else { ProgressView().frame(maxWidth: .infinity).padding(.top, 40) }
@@ -196,7 +227,7 @@ public struct BusinessDetailScreen: View {
 
 extension BusinessDetailScreen {
     /// Today: the time ("7:26 PM"); within a week: weekday; older: "Oct 5" (no year within the year).
-    static func lastMessage(_ d: Date, now: Date = .now, calendar: Calendar = .current) -> String {
+    static func lastMessage(_ d: Date, now: Date = AppClock.now, calendar: Calendar = .current) -> String {
         if calendar.isDate(d, inSameDayAs: now) { return d.formatted(date: .omitted, time: .shortened) }
         if let n = calendar.dateComponents([.day], from: calendar.startOfDay(for: d), to: calendar.startOfDay(for: now)).day, n >= 0, n < 7 {
             return d.formatted(.dateTime.weekday(.wide))
@@ -208,14 +239,26 @@ extension BusinessDetailScreen {
 /// Caption on the left, content on the right: the detail screens' form row.
 struct RuleLikeRow<Content: View>: View {
     @Environment(\.palette) private var p
+    @Environment(\.dynamicTypeSize) private var typeSize
     let title: String
     var divider = true
     @ViewBuilder var content: Content
     init(_ title: String, divider: Bool = true, @ViewBuilder content: () -> Content) { self.title = title; self.divider = divider; self.content = content() }
     var body: some View {
-        HStack(spacing: 12) {
-            Text(title).font(.inboxBody(15)).foregroundStyle(p.secondary).lineLimit(1).frame(width: 104, alignment: .leading)
-            content.font(.inboxBody(16.5)).foregroundStyle(p.text).frame(maxWidth: .infinity, alignment: .leading)
+        Group {
+            if typeSize.isAccessibilitySize {
+                // Accessibility sizes: caption above its value, so neither is cut to "Dom…" / "Lumen Ho…".
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.inboxBody(15)).foregroundStyle(p.secondary)
+                    content.font(.inboxBody(16.5)).foregroundStyle(p.text).frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.vertical, 8)
+            } else {
+                HStack(spacing: 12) {
+                    Text(title).font(.inboxBody(15)).foregroundStyle(p.secondary).lineLimit(1).frame(width: 104, alignment: .leading)
+                    content.font(.inboxBody(16.5)).foregroundStyle(p.text).frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
         }
         .padding(.horizontal, 16).frame(minHeight: 52).contentShape(Rectangle())
         .overlay(alignment: .bottom) { if divider { Rectangle().fill(p.hairline).frame(height: 1).padding(.leading, 16) } }

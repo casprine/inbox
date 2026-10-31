@@ -83,6 +83,8 @@ public actor OutboxWorker {
                 try? await db.completeOps(ids)
                 try? await db.upsertMessages(updated.map(MessageRecord.init))
             } catch let e as APIError {
+                // Signed out: keep the queued ops untouched (they go out after the next sign-in) and stop; nothing to retry until then.
+                if e.isSessionLost { return }   // rows stay in flight with their key; the next claim replays them
                 if e.isRetryable { try? await db.recordFailure(ids, error: "\(e)"); return }
                 // Permanent rejection (e.g. 400/404): drop the ops; the next refresh restores server truth.
                 try? await db.completeOps(ids)

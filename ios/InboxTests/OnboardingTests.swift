@@ -283,8 +283,11 @@ private func rig(token: String? = "t", handler: @escaping MockURLProtocol.Handle
         }
         m.jump(to: .gmail)
         await m.connectGmail()
+        #expect(m.step == .gmailConnected)               // OB07
+        #expect(OnboardingStep.gmailConnected.number == 3)
+        await m.continueFromGmailConnected()
         #expect(m.step == .filters)
-        await m.finishFilters()
+        await m.finishFilters(imported: 3)
         #expect(m.step == .backfill)
         await m.loadEstimates()
         #expect(m.estimates[90] == 3_200)
@@ -292,12 +295,44 @@ private func rig(token: String? = "t", handler: @escaping MockURLProtocol.Handle
         #expect(m.step == .alfather)
         #expect(try await env.database.pref("onboarding.backfill_days") == "90")
         await m.finishAlfather(pair: false)
+        #expect(m.step == .ready)                        // OB12: not complete until "Open Inbox"
+        #expect(await OnboardingState.isComplete(env.database) == false)
+        await m.openInbox()
         #expect(m.step == .done)
         #expect(await OnboardingState.isComplete(env.database))
         // Skipping Gmail skips filters and import too: straight to Alfather.
         let (n, _, srv_n, _) = try rig { _ in json("{}") }
         n.jump(to: .gmail); await n.skipGmail()
         #expect(n.step == .alfather)
+    }
+
+    @Test func readySummaryNamesWhatApplies() {
+        #expect(OnboardingModel.summary(businesses: 4, rules: 3, backfillDays: 90) == "4 businesses, 3 rules from Gmail, and 90 days of mail on its way.")
+        #expect(OnboardingModel.summary(businesses: 1, rules: 1, backfillDays: 365) == "1 business, 1 rule from Gmail, and a year of mail on its way.")
+        #expect(OnboardingModel.summary(businesses: 2, rules: 0, backfillDays: 30) == "2 businesses and 30 days of mail on its way.")
+        #expect(OnboardingModel.summary(businesses: 3, rules: 0, backfillDays: 0) == "3 businesses.")
+        #expect(OnboardingModel.summary(businesses: 0, rules: 0, backfillDays: 0) == "New mail will start to arrive here.")
+    }
+
+    @Test func readyStepResumesAndOnlyOpenInboxCompletesSetup() async throws {
+        let (m, env, _, _) = try rig(token: "t") { _ in json("{}") }
+        try await env.database.setPref(OnboardingState.key, OnboardingStep.ready.rawValue)
+        #expect(await OnboardingState.needsOnboarding(env: env, devToken: nil) == true)
+        await m.resume()
+        #expect(m.step == .ready)
+        try await env.database.setPref("onboarding.backfill_days", "90")
+        await m.loadSummary()
+        #expect(m.summary.hasSuffix("90 days of mail on its way."))
+        await m.openInbox()
+        #expect(await OnboardingState.needsOnboarding(env: env, devToken: nil) == false)
+    }
+
+    @Test func gmailConnectedStepIsBackToConnectAndForwardToFilters() async throws {
+        let (m, _, _, _) = try rig { _ in json("{}") }
+        m.jump(to: .gmailConnected)
+        m.back()
+        #expect(m.step == .gmail)
+        #expect(OnboardingStep.filters.previous == .gmailConnected)
     }
 
     @Test func launchGateGoesStraightToMailWhenATokenIsSeededOrSessionExists() async throws {

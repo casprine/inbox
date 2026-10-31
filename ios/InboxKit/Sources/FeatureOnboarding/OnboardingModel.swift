@@ -8,9 +8,19 @@ import FeatureGmail
 
 /// The seven onboarding steps (OB01–OB13). Raw values are stored in `pref.onboarding.step` so the flow resumes.
 public enum OnboardingStep: String, CaseIterable, Sendable {
-    case welcome, domains, gmail, filters, backfill, alfather, done
-    /// "Step n of 7" shown from step 2 on.
-    public var number: Int { (Self.allCases.firstIndex(of: self) ?? 0) + 1 }
+    case welcome, domains, gmail, gmailConnected, filters, backfill, alfather, ready, done
+    /// "Step n of 7" shown from step 2 on. OB07 "Gmail connected" is the second half of step 3; OB12 "You're set up" is the end (no counter).
+    public var number: Int {
+        switch self {
+        case .welcome: 1
+        case .domains: 2
+        case .gmail, .gmailConnected: 3
+        case .filters: 4
+        case .backfill: 5
+        case .alfather: 6
+        case .ready, .done: 7
+        }
+    }
     public static let total = 7
     public var previous: OnboardingStep? { Self.allCases.firstIndex(of: self).flatMap { $0 > 0 ? Self.allCases[$0 - 1] : nil } }
 }
@@ -21,6 +31,13 @@ public enum OnboardingState {
         (try? await db.pref(key)).flatMap { $0 }.flatMap(OnboardingStep.init(rawValue:)) ?? .welcome
     }
     public static func isComplete(_ db: AppDatabase) async -> Bool { await step(db) == .done }
+
+    /// Setup finished on this phone earlier and a server address is remembered, but the device token is gone (revoked, expired, cleared):
+    /// open the app signed out (Mail from the cache plus "You've been signed out") instead of the welcome screen.
+    public static func hasLostSession(env: AppEnvironment, defaults: UserDefaults = .standard) async -> Bool {
+        guard await env.tokenStore.token() == nil, await isComplete(env.database) else { return false }
+        return !(defaults.string(forKey: SignInModel.addressKey) ?? "").isEmpty
+    }
 
     /// Whether to show onboarding at launch. A seeded dev token (`INBOX_DEV_TOKEN`, debug builds) counts as a finished sign-in and
     /// onboarding, so a fresh install goes straight to Mail; otherwise onboarding shows until a token exists and the step is `done`.
@@ -48,6 +65,8 @@ public final class OnboardingModel {
     public var selected: Set<String> = []          // zone ids
     public var fixing: CloudflareDomain?
     public private(set) var checking = false
+    /// Zones whose routing was fixed in this session (OB04 shows "Routed just now").
+    public private(set) var justRouted: Set<String> = []
     // OB05–OB08
     public let gmail: GmailModel
     // OB09
@@ -58,6 +77,10 @@ public final class OnboardingModel {
     public var alfatherHost: String? { alfatherService?.host }
     public private(set) var searchingAlfather = false
     public private(set) var saving = false
+    // OB07 / OB12
+    /// Rules created from Gmail filters in OB08 (this run of the flow).
+    public private(set) var importedRules = 0
+    public private(set) var summary = ""
 
     public struct Notice: Equatable, Sendable { public var title: String; public var message: String?; public var retry: Bool }
 
@@ -101,20 +124,31 @@ public final class OnboardingModel {
     }
 
     /// After a successful `POST /v1/auth/login` (the device token is already in the Keychain): the destination depends on the mode.
-    /// New: choose businesses (OB02). Existing: Mail root when this server already has businesses, otherwise OB02. The login
-    /// response carries no onboarding step, so "already set up" is read from the server's business list.
-    public func signedIn(_ mode: SignInMode) async {
+    /// New: choose businesses (OB02). Existing: resume at the server's `setup_step` (done: Mail, gmail: Gmail connect, domains: domains).
+    /// A server that doesn't send `setup_step` is read from its business list instead: Mail when it already has businesses, otherwise OB02.
+    public func signedIn(_ mode: SignInMode, setupStep: String? = nil) async {
         switch mode {
         case .new:
             await go(.domains); signIn = nil; await loadDomains()
         case .existing:
-            let cached = await env.database.hasBusinesses()
-            let remote = ((try? await env.api.businesses())?.isEmpty == false)
-            if cached || remote { await go(.done); signIn = nil } else { await go(.domains); signIn = nil; await loadDomains() }
+            switch Self.resumeStep(setupStep) {
+            case .done?: await go(.done); signIn = nil
+            case .gmail?: await go(.gmail); signIn = nil
+            case .domains?: await go(.domains); signIn = nil; await loadDomains()
+            default:
+                let cached = await env.database.hasBusinesses()
+                let remote = ((try? await env.api.businesses())?.isEmpty == false)
+                if cached || remote { await go(.done); signIn = nil } else { await go(.domains); signIn = nil; await loadDomains() }
+            }
         case .signedOut:
             signIn = nil
             await go(.done)
         }
+    }
+
+    /// The three `setup_step` values a server reports; anything else (absent, unknown) falls back to the business-list guess.
+    nonisolated static func resumeStep(_ raw: String?) -> OnboardingStep? {
+        switch raw { case "done": .done; case "gmail": .gmail; case "domains": .domains; default: nil }
     }
 
     // MARK: OB02 / OB03
@@ -143,7 +177,7 @@ public final class OnboardingModel {
         checking = true; defer { checking = false }
         guard let fresh = try? await env.api.checkCloudflareDomain(zoneId: d.zoneId) else { return }
         if let i = domains.firstIndex(where: { $0.id == d.id }) { domains[i] = fresh }
-        if fresh.selectable { selected.insert(fresh.id); fixing = nil } else { fixing = fresh }
+        if fresh.selectable { selected.insert(fresh.id); justRouted.insert(fresh.id); fixing = nil } else { fixing = fresh }
     }
 
     public var chosen: [CloudflareDomain] { domains.filter { selected.contains($0.id) } }
@@ -171,10 +205,12 @@ public final class OnboardingModel {
 
     public func connectGmail() async {
         await gmail.connect()
-        if env.gmail.isConnected { await go(.filters) }
+        if env.gmail.isConnected { await go(.gmailConnected) }
     }
+    /// OB07 Continue.
+    public func continueFromGmailConnected() async { await go(.filters) }
     public func skipGmail() async { await go(.alfather) }          // Gmail skipped: no filters or import to offer
-    public func finishFilters() async { await go(.backfill) }
+    public func finishFilters(imported: Int = 0) async { importedRules = imported; await go(.backfill) }
 
     // MARK: OB09
 
@@ -205,8 +241,33 @@ public final class OnboardingModel {
         await finish()
     }
 
-    /// OB12: remember the chosen import range for the first-open banner (T26 starts the real job) and finish.
-    public func finish() async { await go(.done) }
+    /// End of setup: show OB12 "You're set up".
+    public func finish() async { await go(.ready); await loadSummary() }
+    /// OB12 "Open Inbox": setup is complete, hand over to the tab shell.
+    public func openInbox() async { await go(.done) }
+
+    // MARK: OB12
+
+    /// The one-line summary under "You're set up.": businesses on the server, rules imported from Gmail filters, the chosen import range.
+    public func loadSummary() async {
+        let businesses = ((try? await env.database.businesses()) ?? []).count
+        let days = Int((try? await env.database.pref("onboarding.backfill_days")) ?? "") ?? 0
+        summary = Self.summary(businesses: businesses, rules: importedRules, backfillDays: days)
+    }
+
+    /// "4 businesses, 3 rules from Gmail, and 90 days of mail on its way." Parts that don't apply are left out.
+    nonisolated static func summary(businesses: Int, rules: Int, backfillDays: Int) -> String {
+        var parts: [String] = []
+        if businesses > 0 { parts.append(businesses == 1 ? "1 business" : "\(businesses) businesses") }
+        if rules > 0 { parts.append(rules == 1 ? "1 rule from Gmail" : "\(rules) rules from Gmail") }
+        if backfillDays > 0 { parts.append((backfillDays >= 365 ? "a year" : "\(backfillDays) days") + " of mail on its way") }
+        switch parts.count {
+        case 0: return "New mail will start to arrive here."
+        case 1: return parts[0] + "."
+        case 2: return parts[0] + " and " + parts[1] + "."
+        default: return parts.dropLast().joined(separator: ", ") + ", and " + parts[parts.count - 1] + "."
+        }
+    }
 }
 
 extension AppDatabase {

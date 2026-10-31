@@ -36,7 +36,7 @@ struct MessageListScreen<Header: View>: View {
                         ForEach(section.messages) { m in row(m, last: m.id == lastID) }
                     } header: {
                         if let t = section.title {
-                            Text(t.uppercased()).font(.inboxBody(12.5, medium: true)).tracking(0.5).foregroundStyle(p.secondary)
+                            Text(t.uppercased()).font(.inboxBody(12, medium: true)).tracking(0.6).foregroundStyle(p.secondary)
                                 .padding(.horizontal, 16).padding(.vertical, 6)
                                 .frame(maxWidth: .infinity, alignment: .leading).background(p.ground)
                         }
@@ -83,7 +83,7 @@ struct MessageListScreen<Header: View>: View {
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         if model.isSelecting {
             ToolbarItem(placement: .topBarLeading) { InboxToolbarButton("Select all") { model.selectAll() } }.inboxFlat()
-            ToolbarItem(placement: .principal) { Text("\(model.selection.count) selected").font(.inboxBody(17, medium: true)).foregroundStyle(p.text) }
+            ToolbarItem(placement: .principal) { Text("\(model.selection.count) selected").font(.inboxBody(17, medium: true)).monospacedDigit().foregroundStyle(p.text) }
                 .inboxFlat()
             ToolbarItem(placement: .topBarTrailing) { InboxToolbarButton("Done") { model.endSelecting() } }.inboxFlat()
         } else {
@@ -144,6 +144,6 @@ struct PageHeader: View {
 }
 func unreadSubtitle(_ prefix: String?, _ unread: Int) -> String {
     let u = unread == 0 ? "all read" : "\(unread) unread"
-    // Non-breaking spaces after the dot: at large text the line breaks before "·", never between it and the count.
-    return prefix.map { "\($0) ·\u{00A0}\(u.replacingOccurrences(of: " ", with: "\u{00A0}"))" } ?? u
+    // At large text the line breaks after the "·" (it stays on the first line, glued to the domain), and the count never splits.
+    return prefix.map { "\($0)\u{00A0}· \(u.replacingOccurrences(of: " ", with: "\u{00A0}"))" } ?? u
 }

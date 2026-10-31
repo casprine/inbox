@@ -19,8 +19,10 @@ public struct MessageScreen: View {
     @State private var showMore = false
     let onNavigate: (Route) -> Void
 
-    public init(env: AppEnvironment, id: UUID, onNavigate: @escaping (Route) -> Void) {
+    /// `showMore` opens the More sheet (MS06) at once, for snapshots.
+    public init(env: AppEnvironment, id: UUID, showMore: Bool = false, onNavigate: @escaping (Route) -> Void) {
         _model = State(initialValue: MessageModel(env: env, id: id)); self.onNavigate = onNavigate
+        _showMore = State(initialValue: showMore)
     }
 
     public var body: some View {
@@ -71,9 +73,9 @@ public struct MessageScreen: View {
         }
         if thread.count > 1 {
             HStack(alignment: .firstTextBaseline) {
-                Text(thread.last?.subject ?? "(no subject)").font(.inboxHeading(21, relativeTo: .title3)).tracking(-0.2).foregroundStyle(p.text)
+                Text(thread.last?.subject ?? "(no subject)").font(.inboxHeading(20, relativeTo: .title3)).tracking(-0.2).foregroundStyle(p.text)
                 Spacer(minLength: 8)
-                Text("\(thread.count)").font(.inboxBody(15)).foregroundStyle(p.secondary)
+                Text("\(thread.count)").font(.inboxBody(15)).monospacedDigit().foregroundStyle(p.secondary)
             }
             .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 8)
             .accessibilityElement(children: .combine).accessibilityAddTraits(.isHeader)
@@ -143,9 +145,9 @@ struct MessageCard: View {
         Button { Task { await model.toggle(message.id) } } label: {
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
-                    Text(MessageFormat.senderName(message)).font(.inboxBody(16, medium: true)).foregroundStyle(p.text)
+                    Text(MessageFormat.senderName(message)).font(.inboxBody(15.5, medium: true)).foregroundStyle(p.text)
                     Spacer()
-                    Text(MessageFormat.day(message.receivedAt)).font(.inboxBody(14, relativeTo: .subheadline)).foregroundStyle(p.secondary)
+                    Text(MessageFormat.day(message.receivedAt)).font(.inboxBody(13.5, relativeTo: .subheadline)).monospacedDigit().foregroundStyle(p.secondary)
                 }
                 Text(message.snippet ?? "").font(.inboxBody(15, relativeTo: .subheadline)).foregroundStyle(p.secondary).lineLimit(1)
             }
@@ -160,7 +162,7 @@ struct MessageCard: View {
         header
         if showSubject {
             Text(message.subject?.isEmpty == false ? message.subject! : "(no subject)")
-                .font(.inboxHeading(21, relativeTo: .title3)).tracking(-0.2).lineSpacing(4).foregroundStyle(p.text)
+                .font(.inboxHeading(20, relativeTo: .title3)).tracking(-0.2).lineSpacing(1).foregroundStyle(p.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 14)
                 .accessibilityAddTraits(.isHeader)
@@ -180,10 +182,10 @@ struct MessageCard: View {
     }
 
     private var header: some View {
-        let sender = Text(MessageFormat.senderName(message)).font(.inboxBody(16, medium: true)).foregroundStyle(p.text)
+        let sender = Text(MessageFormat.senderName(message)).font(.inboxBody(15.5, medium: true)).foregroundStyle(p.text)
         let address = message.fromAddr.map { Text($0).font(.inboxBody(14)).foregroundStyle(p.secondary) }
         let to = model.toAddress(message).map { Text("To: \($0)").font(.inboxBody(14)).foregroundStyle(p.secondary) }
-        let time = Text(MessageFormat.clock(message.receivedAt)).font(.inboxBody(14, relativeTo: .subheadline)).foregroundStyle(p.secondary)
+        let time = Text(MessageFormat.clock(message.receivedAt)).font(.inboxBody(13.5, relativeTo: .subheadline)).monospacedDigit().foregroundStyle(p.secondary)
         let row = Group {
             if typeSize.isAccessibilitySize {
                 // Accessibility sizes: everything stacks at full width; nothing is squeezed beside the avatar.
@@ -197,7 +199,8 @@ struct MessageCard: View {
             } else {
                 HStack(alignment: .top, spacing: 12) {
                     avatar
-                    VStack(alignment: .leading, spacing: 1) { sender; address; to }
+                    // Long addresses shorten in the middle; a bare address never breaks inside a word.
+                    VStack(alignment: .leading, spacing: 1) { sender.lineLimit(1); address.lineLimit(1).truncationMode(.middle); to.lineLimit(1).truncationMode(.middle) }
                     Spacer(minLength: 8)
                     time
                 }

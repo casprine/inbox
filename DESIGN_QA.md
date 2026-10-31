@@ -1,4 +1,19 @@
+# Gate 12: PASSED after round D4 (2026-10-31)
+P0 0, P1 0. Both P1 (delete-sheet disabled button, sender HTML at Dynamic Type) and all 20 listed P2 items were re-viewed in the D4 snapshots and are closed; nothing reopened. Remaining P2 polish is accepted (list in `docs/design-audit/GATE12.md` §9). Hand-verification list: GATE12 §6.
+
+# Gate 12 first result (before D4, 2026-10-31)
+Audit after the font swap and the D1 to D3 rounds, all light snapshots viewed, about 40 dark, 36 AX3 light and 7 AX3 dark: **P0 0, P1 2, P2 24 (20 in the fix list, 4 left out as polish).** All Gate 11 items H-1..H-17 are closed. The two P1 are the delete-everything sheet's disabled button, which is unreadable (invisible in dark), and sender HTML in a message that does not scale with Dynamic Type. The ~30 D3 findings are all graded: 8 closed by written spec (new `docs/design-specs/D6-gate12-decisions.md`, 21 numbered decisions the owner can overrule), the rest are in the fix list or left out. The gate does not pass yet; one Swift round (ordered list with snapshot proofs in `docs/handoff/design-to-swift.md`) fixes it. Details, per-screen table and the hand-verification list: `docs/design-audit/GATE12.md`.
+
+---
+
+# Gate 11 summary (2026-10-31)
+Full screen audit against boards, D2-D4 and tokens v1.2: **P0 0, P1 8, P2 9.** Sign-in (OB01b) matches D4 in layout, copy, states and AX3. Main gaps: Open Runde size/weight table (D4 §2.3) is not applied, red text still uses `destructive`/`accent` in 10 places, AX3 large title breaks mid-word, locked sign-in button is unreadable, OB07/OB12 not built, and about 40 screens have no current snapshot. Details: `docs/design-audit/GATE11.md`; ordered fixes: `docs/handoff/design-to-swift.md`; proposals: `docs/design-specs/D5-proposals.md`.
+
+---
+
 # Design status (for the owner) — updated after Gate 7
+
+> **HISTORICAL (superseded 2026-10-31).** The "Known gaps" and "Decisions needed" below are settled: Open Runde replaces the unlicensed fonts (D-011), password sign-in replaces Sign in with Apple (D-012), `#BD251D` is approved for red text (D-013), and Gate 12 passed (see `docs/design-audit/GATE12.md`). Current state is in the Gate 11 and Gate 12 summaries above.
 
 **Phase 2 update (2026-10-12):** all Gate 8 P1s (BZ02 edit rows, AX3 message header, relative dates) are fixed and verified in Gate 9; no P0/P1 open. The `Spec updates` canvas page (SU01–SU08, light only) shows the new specs; original boards are untouched. Still not reviewed for lack of screenshots: Message More/Details/Original/attachment, rules-editor states RU02/06/07/09/10, onboarding OB03/04/06/07/11–13, swipe/select/refresh, dev-server mode beyond one shot. Open P2s: system drag handle (BZ02), Business-page AX3 subline separator, and the Gate 4/6 backlog.
 

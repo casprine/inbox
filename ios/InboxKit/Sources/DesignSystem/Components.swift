@@ -33,7 +33,7 @@ public struct Chip: View {
     public var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.inboxBody(14.5, medium: selected))
+                .font(.inboxBody(13.5, medium: true))
                 .foregroundStyle(selected ? p.onAccent : p.text)
                 .padding(.horizontal, 13).frame(height: 32)
                 .background(Capsule().fill(selected ? p.accentFill : .clear))
@@ -83,10 +83,12 @@ public struct InsetGroup<Content: View>: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let header {
-                Text(header.uppercased()).font(.inboxBody(12.5, medium: true)).tracking(0.5).foregroundStyle(p.secondary)
+                Text(header.uppercased()).font(.inboxBody(12, medium: true)).tracking(0.6).foregroundStyle(p.secondary)
                     .padding(.horizontal, 16)
             }
             VStack(spacing: 0) { content }
+                // A row draws its hairline at its bottom edge; the last row of a card (or the only one) must not show it (H-11).
+                .overlay(alignment: .bottom) { Rectangle().fill(p.card).frame(height: 1).allowsHitTesting(false) }
                 .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(p.card))
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
@@ -96,6 +98,8 @@ public struct InsetGroup<Content: View>: View {
 public struct InsetRow<Trailing: View>: View {
     @Environment(\.palette) private var p
     @Environment(\.dynamicTypeSize) private var typeSize
+    /// DD-18.1: the leading glyph scales with Dynamic Type (never below 22 pt).
+    @ScaledMetric(relativeTo: .body) private var glyph: CGFloat = 20
     let title: String
     let subtitle: String?
     let showsDivider: Bool
@@ -107,13 +111,13 @@ public struct InsetRow<Trailing: View>: View {
     }
     private var titles: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.inboxBody(16.5)).foregroundStyle(p.text).fixedSize(horizontal: false, vertical: true)
-            if let subtitle { Text(subtitle).font(.inboxBody(14, relativeTo: .subheadline)).foregroundStyle(p.secondary).fixedSize(horizontal: false, vertical: true) }
+            Text(title).font(.inboxBody(16)).foregroundStyle(p.text).fixedSize(horizontal: false, vertical: true)
+            if let subtitle { Text(subtitle).font(.inboxBody(13.5, relativeTo: .subheadline)).foregroundStyle(p.secondary).fixedSize(horizontal: false, vertical: true) }
         }
     }
     public var body: some View {
         HStack(spacing: 12) {
-            if let systemImage { Image(systemName: systemImage).font(.system(size: 20)).foregroundStyle(p.accent).frame(width: 24) }
+            if let systemImage { Image(systemName: systemImage).font(.system(size: max(glyph, 22))).foregroundStyle(p.accent).frame(width: max(glyph, 22) * 1.2) }
             // Accessibility sizes: the value drops under the title instead of squeezing both into one line.
             if typeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 4) { titles; trailing }
@@ -154,6 +158,7 @@ public struct InboxProgressBar: View {
 
 public struct Banner: View {
     @Environment(\.palette) private var p
+    @Environment(\.dynamicTypeSize) private var typeSize
     let kind: StatusKind
     let title: String
     let message: String?
@@ -172,29 +177,36 @@ public struct Banner: View {
         switch kind {
         case .ok: Color.hex(0x3E8E5A)
         case .warning: p.warning
-        case .error: p.destructive
+        case .error: p.accent
         case .idle: p.secondary
         }
     }
+    private var actionButton: some View {
+        Button(actionTitle ?? "", action: action)
+            .font(.inboxBody(14.5, medium: true)).foregroundStyle(p.accentText)
+            .frame(minHeight: 44)
+    }
+    /// From AX1 the action sits on its own line under the text, so the sentence keeps the full width (D4 §1.7).
+    private var actionBelow: Bool { actionTitle != nil && typeSize.isAccessibilitySize }
+
     public var body: some View {
         HStack(alignment: .top, spacing: 12) {
             if let systemImage { Image(systemName: systemImage).font(.system(size: 18)).foregroundStyle(tint).padding(.top, 1) }
             else { StatusDot(kind).padding(.top, 7) }
-            if inline, let message {
-                (Text(title + " ").font(.inboxBody(15, medium: true)).foregroundColor(p.text) + Text(message).font(.inboxBody(15)).foregroundColor(p.text))
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.inboxBody(15, medium: true)).foregroundStyle(p.text)
-                    if let message { Text(message).font(.inboxBody(14, relativeTo: .subheadline)).foregroundStyle(p.secondary) }
+            VStack(alignment: .leading, spacing: 0) {
+                if inline, let message {
+                    (Text(title + " ").font(.inboxBody(14.5, medium: true)).foregroundColor(p.text) + Text(message).font(.inboxBody(14.5)).foregroundColor(p.text))
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).font(.inboxBody(14.5, medium: true)).foregroundStyle(p.text)
+                        if let message { Text(message).font(.inboxBody(14.5, relativeTo: .subheadline)).foregroundStyle(p.secondary) }
+                    }
                 }
+                if actionBelow { actionButton }
             }
             Spacer(minLength: 8)
-            if let actionTitle {
-                Button(actionTitle, action: action)
-                    .font(.inboxBody(15, medium: true)).foregroundStyle(p.accentText)
-                    .frame(minHeight: 44)
-            }
+            if actionTitle != nil, !actionBelow { actionButton }
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(p.card))
@@ -213,7 +225,7 @@ public struct EmptyState: View {
     }
     public var body: some View {
         VStack(spacing: 8) {
-            Text(title).font(.inboxHeading(22)).foregroundStyle(p.text)
+            Text(title).font(.inboxHeading(20)).foregroundStyle(p.text)
             Text(message).font(.inboxBody(16)).foregroundStyle(p.secondary).multilineTextAlignment(.center)
             if let actionTitle {
                 PrimaryButton(actionTitle, style: .secondary, action: action).padding(.top, 8)

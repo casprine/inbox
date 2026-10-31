@@ -18,15 +18,18 @@ public struct AppEnvironment: Sendable {
     public let gmail: GmailStatusStore
     public let theme: ThemePreference
     public let backfill: BackfillStore
+    public let session: SessionMonitor
 
     public init(api: APIClient, tokenStore: any TokenStore, database: AppDatabase, reachability: any Reachability, labels: (any LabelsProviding)? = nil, gmail: GmailStatusStore = GmailStatusStore()) {
         self.labels = labels ?? APILabelsProvider(api: api)
         self.gmail = gmail
         theme = ThemePreference()
         backfill = BackfillStore()
+        session = SessionMonitor()
         rules = RulesRepository(api: api, db: database)
         self.api = api; self.tokenStore = tokenStore; self.database = database
         sse = SSEClient(api: api)
+        session.attach(to: api)
         outbox = OutboxWorker(api: api, db: database, reachability: reachability)
         businesses = BusinessRepository(api: api, db: database)
         mail = MailRepository(api: api, db: database, outbox: outbox)

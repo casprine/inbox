@@ -93,7 +93,7 @@ public struct PrivacyScreen: View {
                 }
                 InsetGroup {
                     Button { deleting = true; Task { await model.beginDelete() } } label: {
-                        Text("Delete everything Inbox stored").font(.inboxBody(16.5)).foregroundStyle(p.destructive).frame(maxWidth: .infinity, minHeight: 56).contentShape(Rectangle())
+                        Text("Delete everything Inbox stored").font(.inboxBody(16.5)).foregroundStyle(p.accentText).frame(maxWidth: .infinity, minHeight: 56).contentShape(Rectangle())
                     }.buttonStyle(.plain)
                 }
                 Text("Deleting stored copies never touches Gmail.").font(.inboxBody(13.5)).foregroundStyle(p.secondary).padding(.horizontal, 4)
@@ -105,7 +105,10 @@ public struct PrivacyScreen: View {
         .task {
             await model.load()
             // Screenshot aid (mock mode): `-OpenDeleteSheet 1` opens the delete-everything confirmation.
-            if UserDefaults.standard.bool(forKey: "OpenDeleteSheet") { deleting = true; await model.beginDelete() }
+            if UserDefaults.standard.bool(forKey: "OpenDeleteSheet") {
+                deleting = true; await model.beginDelete()
+                if UserDefaults.standard.bool(forKey: "OpenDeleteSheetTyped") { model.typed = model.token ?? "" }   // enabled-state snapshot
+            }
         }
     }
 
@@ -122,9 +125,9 @@ public struct PrivacyScreen: View {
                         .textInputAutocapitalization(.characters).autocorrectionDisabled().font(.inboxMono(16)).foregroundStyle(p.text)
                         .padding(.horizontal, 12).frame(height: 48)
                         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(p.field))
-                    PrimaryButton(model.working ? "Deleting…" : "Delete everything", style: .destructive) {
+                    PrimaryButton(model.working ? "Deleting…" : "Delete everything", style: .destructive, lockedWhenDisabled: true) {
                         Task { await model.confirmDelete(); if model.deleted != nil { deleting = false } }
-                    }.disabled(!model.canDelete).opacity(model.canDelete ? 1 : 0.4)
+                    }.disabled(!model.canDelete)
                 } else if model.working { ProgressView().frame(maxWidth: .infinity) }
                 else { PrimaryButton("Try again", style: .secondary) { Task { await model.beginDelete() } } }
             }.padding(.horizontal, 16)
