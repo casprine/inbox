@@ -131,6 +131,10 @@ curl -si -X POST https://mini.tail1234.ts.net:8443/ingest/v1/notify -H "X-Inbox-
 - **Change the Postgres password.** Not by editing `.env` alone (the volume keeps the old one): `dc exec postgres psql -U inbox -c "alter user inbox password '<new>'"`, then set `POSTGRES_PASSWORD` in `.env` and `dc up -d --wait`.
 - **Rotate the R2 keys.** Create a new token in Cloudflare, put it in `.env`, `dc up -d --wait`, check `/readyz`, then delete the old token.
 
+## Logs in OpenTelemetry
+
+Set `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_INGEST_KEY` and `OTEL_LOG_LEVEL` in `deploy/.env` and run `up -d`. Logs keep going to `docker logs` as before; the same lines (at or above the level) are also sent in batches. If the endpoint is wrong the server logs `telemetry disabled` and keeps running; in production a non-https endpoint stops startup. Nothing secret is in the log lines, so none is sent.
+
 ## Log lines (what each means)
 
 Logs are JSON, one object per line (`dc logs inbox`). They never contain passwords, device tokens, the ingest secret, Gmail tokens or codes, or mail subjects, addresses and bodies (a test, `TestServeLogsNeverContainSecrets`, and `make prod-smoke` check this).

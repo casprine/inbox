@@ -35,6 +35,7 @@ import (
 	"github.com/casprine/inbox/server/internal/retention"
 	"github.com/casprine/inbox/server/internal/rulesapi"
 	"github.com/casprine/inbox/server/internal/store"
+	"github.com/casprine/inbox/server/internal/telemetry"
 )
 
 const usage = "usage: inboxd serve | migrate | admin seed-demo|dev-token|rotate-keys | help"
@@ -51,8 +52,14 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg := config.FromEnv()
+	tcfg := telemetry.FromEnv(os.Getenv, cfg.Production)
+	log, flush := telemetry.Setup(ctx, tcfg)
+	defer func() {
+		fctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = flush(fctx)
+	}()
 
 	var err error
 	switch os.Args[1] {
@@ -67,11 +74,17 @@ func main() {
 	}
 	if err != nil {
 		log.Error("fatal", "err", err)
+		fctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = flush(fctx)
+		cancel()
 		os.Exit(1)
 	}
 }
 
 func serve(ctx context.Context, log *slog.Logger, cfg config.Config) error {
+	if err := telemetry.FromEnv(os.Getenv, cfg.Production).Validate(); err != nil {
+		return configProblems(log, err)
+	}
 	if err := cfg.ValidateServe(); err != nil {
 		return configProblems(log, err)
 	}

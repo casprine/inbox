@@ -281,6 +281,10 @@ Set in `deploy/.env` (`deploy/.env.example` has comments). In production mode (t
 | `DEADMAN_URL` | | optional, pinged every 5 minutes |
 | `RECONCILE_INTERVAL` `RECONCILE_MIN_AGE` | catch-up from R2 | defaults `5m` (minimum `10s`) and `1m` |
 | `LOGIN_IP_HEADER` | per-client login lockout | optional, only behind a proxy you trust |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | base URL of your OpenTelemetry (OTLP/HTTP) backend; logs are sent to `<url>/v1/logs`. Empty = no telemetry. https required in production | optional |
+| `OTEL_INGEST_KEY` | your backend's ingest key, sent as `Authorization: Bearer <key>` | optional |
+| `OTEL_LOG_LEVEL` | lowest level sent: `error`, `warn`, `info` (default) or `debug`. Stdout is unchanged | optional |
+| `OTEL_EXPORTER_OTLP_HEADERS` | extra headers `name=value,...` if your vendor does not use Bearer | optional |
 | `API_BIND` `API_PORT` `INGEST_BIND` `INGEST_PORT` | compose | host side of the published ports; default loopback, 8080 and 8081 |
 | `HTTP_ADDR` `INGEST_ADDR` | | container-side listen addresses (`:8080`, `:8081`); leave alone |
 | `INBOX_ENV` | | `production` in the image and compose; leave alone |

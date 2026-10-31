@@ -74,6 +74,10 @@ services:
       # limiter. If Serve sends the caller's address in X-Forwarded-For (UNVERIFIED, see docs/DEPLOY.md),
       # set LOGIN_IP_HEADER=X-Forwarded-For in .env so the lockout is per client.
       LOGIN_IP_HEADER: ${LOGIN_IP_HEADER:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_INGEST_KEY: ${OTEL_INGEST_KEY:-}
+      OTEL_LOG_LEVEL: ${OTEL_LOG_LEVEL:-info}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/readyz >/dev/null"]
       interval: 15s
