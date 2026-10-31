@@ -38,7 +38,7 @@ Real Cloudflare (Email Routing, R2, Worker reaching your Funnel address), Google
 
 ## Decisions still open for you
 1. **Alfather** (D-014, C-22): how does it really connect? The assumed contract stands.
-2. **Is Gmail required?** (C-31) In the sandbox `setup_step` is always `gmail`, so "I already set this up" lands on the Gmail step. If Gmail is optional, change the rule to "done means businesses exist".
+2. ~~Is Gmail required?~~ Decided (C-46): Gmail stays required for now. Outlook is not supported; forward business mail to a Gmail address. An Outlook (Graph) connector would be a later feature.
 3. Review the 21 design decisions (`docs/design-specs/D6-gate12-decisions.md`) and the choices in `COORDINATOR_LOG.md`; any can be reversed.
 
 ## Known gaps
