@@ -1,0 +1,2177 @@
+openapi: 3.1.0
+info:
+  title: Inbox API
+  version: 0.1.0
+  description: |
+    Single contract for the Inbox server. Every route registered by the server MUST appear here
+    (enforced by server/internal/contract). Paths include the /v1 prefix literally.
+    Errors are RFC 9457 problem documents (application/problem+json) with a stable `code`.
+servers:
+  - url: http://localhost:8080
+security:
+  - bearerAuth: []
+tags:
+  - {name: ops}
+  - {name: auth}
+  - {name: businesses}
+  - {name: messages}
+  - {name: search}
+  - {name: attention}
+  - {name: rules}
+  - {name: events}
+  - {name: ingest}
+  - {name: alfather}
+  - {name: settings}
+  - {name: backfill}
+  - {name: health}
+  - {name: cloudflare}
+  - {name: gmail}
+paths:
+  /healthz:
+    get:
+      tags: [ops]
+      operationId: healthz
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Status"}
+  /readyz:
+    get:
+      tags: [ops]
+      operationId: readyz
+      summary: Readiness probe (pings the database)
+      security: []
+      responses:
+        "200":
+          description: Ready (status "ready")
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Status"}
+        "503":
+          description: Not ready (status "unavailable"; not a problem document)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Status"}
+
+  /ingest/v1/notify:
+    post:
+      tags: [ingest]
+      operationId: ingestNotify
+      summary: Edge worker notification that a raw message was stored (or failed to store)
+      description: |
+        Authenticated by HMAC-SHA256 hex of `X-Inbox-Timestamp + "." + body` in `X-Inbox-Signature`
+        (clock skew max 5 minutes), not by a bearer token. Served ONLY by the separate ingest listener (`INGEST_ADDR`,
+        default `:8081`, published with Tailscale Funnel), never by the API listener; the app does not call it. The listener
+        starts only when INGEST_SECRET is set.
+        Send either a `key` starting with `raw/`, or `key: null` with `reason: store_failed`.
+      security: []
+      parameters:
+        - {name: X-Inbox-Timestamp, in: header, required: true, schema: {type: string, description: Unix seconds}}
+        - {name: X-Inbox-Signature, in: header, required: true, schema: {type: string, description: Hex HMAC-SHA256}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/NotifyPayload"}
+      responses:
+        "202":
+          description: Accepted for processing
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, const: accepted}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "413": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: authLogin
+      summary: Sign in with the owner password and receive a device token
+      description: |
+        The password is the server's `OWNER_PASSWORD`. A correct password registers a new device and returns its token
+        (shown once; only its hash is stored). Wrong or unknown passwords all answer the same generic 401
+        `invalid_credentials`. Attempts are rate limited per client address with an escalating lock plus a global cap:
+        429 `rate_limited` with `Retry-After` (seconds), also for the correct password while the client is locked.
+        Replaces the removed `/v1/auth/apple`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/LoginRequest"}
+      responses:
+        "200":
+          description: Device registered
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/LoginResponse"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429":
+          description: Too many sign-in attempts (code `rate_limited`)
+          headers:
+            Retry-After: {schema: {type: integer}, description: Seconds to wait before trying again}
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "500": {$ref: "#/components/responses/Problem"}
+
+  /v1/mail:refresh:
+    post:
+      tags: [ingest]
+      operationId: refreshMail
+      summary: Ask the server to look for mail that reached R2 but was never announced
+      description: |
+        Queues a catch-up scan: the server lists the raw-mail bucket (R2) and ingests every message Postgres does not
+        have yet (a lost Worker ping, or the server was off). The same scan runs at server start and every
+        `RECONCILE_INTERVAL` (default 5m). Returns immediately (202); new mail then shows up through `/v1/events`
+        (`mail.new`) and the list endpoints. Repeated calls while a scan is queued or running collapse into one.
+        Mail younger than a minute is left to its normal ping.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, const: queued}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/devices/{id}:
+    delete:
+      tags: [auth]
+      operationId: revokeDevice
+      summary: Revoke a device token
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "204": {description: Revoked}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/businesses:
+    get:
+      tags: [businesses]
+      operationId: listBusinesses
+      summary: List businesses (in user order) with unread counts and addresses
+      responses:
+        "200":
+          description: Businesses
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BusinessList"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+    post:
+      tags: [businesses]
+      operationId: createBusiness
+      summary: Create a business for a domain
+      description: |
+        When the server has a Cloudflare token the domain must be a zone in that account (422
+        `domain_not_in_cloudflare` otherwise; 502 `cloudflare_unavailable`); `cf_zone_id` is filled in and `routing`
+        reflects the catch-all. A business whose routing is not `ok` is still created so the app can show the fix.
+        Without a token the check is skipped and `routing` is `unknown`. Removing a business (DELETE) purges its mail
+        and never changes anything in Cloudflare; later mail to that domain arrives unassigned.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CreateBusinessRequest"}
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Business"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "422": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "502": {$ref: "#/components/responses/Problem"}
+
+  /v1/businesses:order:
+    put:
+      tags: [businesses]
+      operationId: orderBusinesses
+      summary: Set the business order
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              additionalProperties: false
+              properties:
+                ids:
+                  type: array
+                  items: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Businesses in the new order
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BusinessList"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/businesses/{id}:
+    patch:
+      tags: [businesses]
+      operationId: patchBusiness
+      summary: Rename, hide or disable a business
+      description: The response omits unread and addresses (zero / empty).
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PatchBusinessRequest"}
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Business"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+    delete:
+      tags: [businesses]
+      operationId: deleteBusiness
+      summary: Delete a business and all its messages and stored blobs
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "204": {description: Deleted}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/messages:
+    get:
+      tags: [messages]
+      operationId: listMessages
+      summary: List messages, newest first, cursor-paginated
+      parameters:
+        - {name: business, in: query, schema: {type: string, format: uuid}}
+        - {name: unread, in: query, schema: {type: boolean}}
+        - {name: to, in: query, description: Local part of the recipient address (lowercased), schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+        - {name: cursor, in: query, description: Opaque `next_cursor` from a previous page, schema: {type: string}}
+      responses:
+        "200":
+          description: A page of messages
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MessagePage"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/messages:batch:
+    post:
+      tags: [messages]
+      operationId: batchMessages
+      summary: Mark read/unread or archive/unarchive up to 200 messages
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, op]
+              additionalProperties: false
+              properties:
+                ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                  items: {type: string, format: uuid}
+                op: {type: string, enum: [read, unread, archive, unarchive]}
+      responses:
+        "200":
+          description: Updated messages
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages]
+                properties:
+                  messages:
+                    type: array
+                    items: {$ref: "#/components/schemas/Message"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/messages/{id}:
+    get:
+      tags: [messages]
+      operationId: getMessage
+      summary: Message with thread, attachments and details
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+      responses:
+        "200":
+          description: Message
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MessageDetail"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/messages/{id}/body:
+    get:
+      tags: [messages]
+      operationId: getMessageBody
+      summary: Parsed body (HTML and text) from the stored raw message
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+      responses:
+        "200":
+          description: Parsed body
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MessageBody"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "422": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/messages/{id}/raw:
+    get:
+      tags: [messages]
+      operationId: getMessageRaw
+      summary: Download the original RFC 822 message
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+      responses:
+        "200":
+          description: Raw message (attachment; filename "<id>.eml")
+          content:
+            message/rfc822:
+              schema: {type: string, format: binary}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/attachments/{id}:
+    get:
+      tags: [messages]
+      operationId: getAttachment
+      summary: Redirect to a short-lived (60 s) presigned URL for the attachment
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+      responses:
+        "302":
+          description: Redirect to object storage
+          headers:
+            Location: {schema: {type: string, format: uri}}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/search:
+    get:
+      tags: [search]
+      operationId: search
+      summary: Full-text search grouped by business, newest first, paginated
+      description: |
+        Operators in `q`: `from:`, `to:`, `has:attachment`, quoted phrases. The last bare token is a
+        prefix match unless `q` ends in whitespace.
+
+        Paging: results are one time-ordered list (newest first) cut into pages of `limit` (default 100, 1-200).
+        Each page is grouped by business on its own; when `has_more` is true, pass `next_cursor` as `cursor` to get
+        the next (older) page and merge its groups into the ones you have by business id. `total` counts the
+        results on this page, not all matches. Cursors are opaque and only valid for the same `q`/`business`.
+      parameters:
+        - {name: q, in: query, required: true, schema: {type: string, maxLength: 200}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 100}}
+        - {name: cursor, in: query, description: "`next_cursor` from the previous page", schema: {type: string}}
+        - {name: business, in: query, description: Restrict to one business, schema: {type: string, format: uuid}}
+      responses:
+        "200":
+          description: Results
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SearchResponse"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/search/recents:
+    get:
+      tags: [search]
+      operationId: listRecentSearches
+      summary: Recent searches (most recent first, max 10)
+      responses:
+        "200":
+          description: Recents
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Recents"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+    post:
+      tags: [search]
+      operationId: addRecentSearch
+      summary: Record a search (moves it to the front, case-insensitive de-dupe)
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [q]
+              additionalProperties: false
+              properties:
+                q: {type: string, minLength: 1, maxLength: 200}
+      responses:
+        "200":
+          description: Updated recents
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Recents"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+    delete:
+      tags: [search]
+      operationId: deleteRecentSearches
+      summary: Clear all recents, or only the entry matching `q`
+      parameters:
+        - {name: q, in: query, description: Remove only this entry (case-insensitive), schema: {type: string}}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "204": {description: Cleared}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/events:
+    get:
+      tags: [events]
+      operationId: streamEvents
+      summary: Server-sent events stream
+      description: |
+        `text/event-stream`. Starts with `retry: 3000` and a `: connected` comment, then periodic
+        heartbeat comments. Each frame has `id:` (per-process counter), `event:` (the event type)
+        and `data:` (JSON, see Event). A slow client is dropped and should reconnect and refetch.
+      responses:
+        "200":
+          description: Event stream
+          content:
+            text/event-stream:
+              schema: {type: string}
+              itemSchema: {$ref: "#/components/schemas/Event"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/attention:
+    get:
+      tags: [attention]
+      operationId: getAttention
+      summary: Counts of unrouted and failed messages
+      responses:
+        "200":
+          description: Counts
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AttentionSummary"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/attention/unrouted:
+    get:
+      tags: [attention]
+      operationId: listUnrouted
+      summary: Unrouted messages grouped by business (max 200)
+      responses:
+        "200":
+          description: Groups
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UnroutedList"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/attention/failed:
+    get:
+      tags: [attention]
+      operationId: listFailed
+      summary: Messages whose processing failed and are not dismissed (max 200)
+      responses:
+        "200":
+          description: Failed messages
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages]
+                properties:
+                  messages:
+                    type: array
+                    items: {$ref: "#/components/schemas/FailedMessage"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/failed/{id}:retry:
+    post:
+      tags: [attention]
+      operationId: retryFailed
+      summary: Re-process a failed message from its stored raw object
+      description: |
+        With a stored raw copy: deletes the failed row and re-enqueues ingest_process (202; the row is restored if enqueueing fails).
+        Without one (`store_failed`): downloads the message from Gmail by its Message-ID, stores and routes it, and
+        answers 200 `imported` with the new message id. 409 `needs_gmail` when Gmail is not connected, 409
+        `not_in_gmail` when Gmail has no such message (the failed row is kept), 502 `gmail_unavailable`.
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, id]
+                properties:
+                  status: {type: string, const: queued}
+                  id: {type: string, format: uuid}
+        "200":
+          description: Imported from Gmail
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, id]
+                properties:
+                  status: {type: string, const: imported}
+                  id: {type: string, format: uuid, description: The stored message}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "502": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/failed/{id}:dismiss:
+    post:
+      tags: [attention]
+      operationId: dismissFailed
+      summary: Dismiss a failed message
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "204": {description: Dismissed}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+  /v1/rules:
+    get:
+      tags: [rules]
+      operationId: listRules
+      summary: List rules in priority order (first match wins)
+      responses:
+        "200":
+          description: Rules
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RuleList"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+    post:
+      tags: [rules]
+      operationId: createRule
+      summary: Create a rule at the top of the order
+      description: |
+        `label_only` defaults to true. Queues `reroute_unrouted`. Invalid input answers 422
+        `rule_pattern_invalid` (a match_* field) or `invalid_rule`, with `field`, `column` and `errors`.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RuleInput"}
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Rule"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "422": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/rules:order:
+    put:
+      tags: [rules]
+      operationId: orderRules
+      summary: Set rule priority
+      description: Listed rules come first in the given order; unlisted rules follow in their current order. Queues `reroute_unrouted`.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              additionalProperties: false
+              properties:
+                ids:
+                  type: array
+                  items: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Rules in the new order
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RuleList"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/rules:test:
+    post:
+      tags: [rules]
+      operationId: testRule
+      summary: Test a draft rule against recent messages
+      description: |
+        The draft takes the position of the rule with the same `id`, or the top of the order when
+        `id` is omitted. `would_match` are messages the draft would claim; `caught_earlier` are
+        messages it matches that a rule ahead of it claims first. Validation errors are 422 as for create.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rule]
+              additionalProperties: false
+              properties:
+                rule: {$ref: "#/components/schemas/RuleInput"}
+                scope: {type: string, enum: [all, unrouted], default: all}
+                limit: {type: integer, minimum: 1, maximum: 1000, default: 200}
+      responses:
+        "200":
+          description: Test result
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RuleTestResult"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "422": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/rules/{id}:
+    patch:
+      tags: [rules]
+      operationId: patchRule
+      summary: Edit a rule
+      description: Send only the fields to change; null clears a nullable field. Queues `reroute_unrouted`. 422 as for create.
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RulePatch"}
+      responses:
+        "200":
+          description: Updated rule
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Rule"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "422": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+    delete:
+      tags: [rules]
+      operationId: deleteRule
+      summary: Delete a rule
+      description: Messages it routed become unrouted and are re-evaluated by `reroute_unrouted`.
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "204": {description: Deleted}
+        "404": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/rules/{id}:apply:
+    post:
+      tags: [rules]
+      operationId: applyRule
+      summary: Re-route existing messages with the current rules
+      description: |
+        Synchronously re-evaluates stored inbound messages against all enabled rules (so first match
+        still wins). `unrouted` (default) only touches unrouted messages; `all` re-evaluates everything.
+        The rule must be enabled.
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                scope: {type: string, enum: [all, unrouted], default: unrouted}
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [scope, routed]
+                properties:
+                  scope: {type: string, enum: [all, unrouted]}
+                  routed: {type: integer, description: Messages that ended up routed to a rule}
+        "400": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/gmail/connect:
+    post:
+      tags: [gmail]
+      operationId: gmailConnect
+      summary: Start the Gmail OAuth handshake
+      description: |
+        Returns the Google consent URL. Open it in ASWebAuthenticationSession with callback scheme `inbox`.
+        Google redirects to `/oauth/google/callback`, which answers 302 to
+        `inbox://gmail/connected?status=ok` or `?status=error&reason=<reason>`
+        (reasons: invalid_state, access_denied, google_error, invalid_request, exchange_failed,
+        no_refresh_token, profile_failed, not_configured, internal). The state is single use and expires after 10 minutes.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "200":
+          description: Consent URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [auth_url, callback_scheme, expires_in]
+                properties:
+                  auth_url: {type: string, format: uri}
+                  callback_scheme: {type: string, const: inbox}
+                  expires_in: {type: integer, description: Seconds the handshake stays valid}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/gmail/status:
+    get:
+      tags: [gmail]
+      operationId: gmailStatus
+      summary: Connection state of the Gmail account
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/GmailStatus"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/gmail:disconnect:
+    post:
+      tags: [gmail]
+      operationId: gmailDisconnect
+      summary: Revoke the Gmail grant and forget the account
+      description: Queued write-backs are paused (state `paused`) and resume if Gmail is connected again.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "204": {description: Disconnected}
+        "401": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /oauth/google/callback:
+    get:
+      tags: [gmail]
+      operationId: googleOAuthCallback
+      summary: OAuth redirect target (browser only, bound to the handshake state)
+      security: []
+      parameters:
+        - {name: code, in: query, schema: {type: string}}
+        - {name: state, in: query, schema: {type: string}}
+        - {name: error, in: query, schema: {type: string}}
+      responses:
+        "302":
+          description: Redirect to the app deep link `inbox://gmail/connected?status=ok|error[&reason=...]`
+          headers:
+            Location: {schema: {type: string}}
+  /v1/messages/{id}/gmail:retry:
+    post:
+      tags: [gmail]
+      operationId: retryGmailSync
+      summary: Try the Gmail write-back again (state failed or not_found)
+      description: |
+        Puts the message's Gmail sync back to `pending`, due now. 409 `gmail_not_connected` when no account
+        is connected, 409 `gmail_nothing_to_retry` when the sync is not failed or not_found, 404 when the
+        message has no Gmail sync.
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, id]
+                properties:
+                  status: {type: string, const: queued}
+                  id: {type: string, format: uuid}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+  /v1/gmail/labels:
+    get:
+      tags: [gmail]
+      operationId: listGmailLabels
+      summary: Your Gmail labels (user labels only, sorted by name)
+      description: Reloads from Gmail each call (and refreshes the server's cache). Errors - 409 gmail_not_connected, 409 gmail_needs_reauth, 502 gmail_unavailable, 503 gmail_rate_limited.
+      responses:
+        "200":
+          description: Labels
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [labels]
+                properties:
+                  labels:
+                    type: array
+                    items: {$ref: "#/components/schemas/GmailLabel"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "502": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+    post:
+      tags: [gmail]
+      operationId: createGmailLabel
+      summary: Create a Gmail label (idempotent by name)
+      description: |
+        Names use `/` for nesting ("Acme/Invoices"); 1-225 characters; Gmail system labels are rejected
+        (422 invalid_label). 201 when created, 200 with `created:false` when it already existed.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+      responses:
+        "200":
+          description: Already existed
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/GmailLabelResult"}
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/GmailLabelResult"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "422": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "502": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/gmail/filters:
+    get:
+      tags: [gmail]
+      operationId: listGmailFilters
+      summary: Your Gmail filters, with whether each can become a rule
+      description: |
+        A filter is importable when it adds one of your labels, matches on from / to / subject only, and does not
+        delete or forward. Not importable reasons - `deletes_mail`, `forwards_mail`, `no_label`,
+        `unsupported_criteria` (search queries, size, attachments, OR, grouping, negation), `unmanaged_domain`
+        (the `to` address is not on one of your businesses). Imported rules are always label-only.
+        403 `gmail_scope_missing` when Google did not grant filter access (reconnect Gmail).
+      responses:
+        "200":
+          description: Filters
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [filters, importable]
+                properties:
+                  filters:
+                    type: array
+                    items: {$ref: "#/components/schemas/GmailFilter"}
+                  importable: {type: integer, description: Importable filters not yet imported}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "502": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/rules:import:
+    post:
+      tags: [gmail, rules]
+      operationId: importRules
+      summary: Turn Gmail filters into label-only rules
+      description: |
+        Body is optional; without `filter_ids` every importable, not yet imported filter is imported.
+        Filters already imported, unknown ids and non-importable filters come back in `skipped` with a reason
+        (`already_imported`, `not_found`, or the not-importable reason). New rules go to the top of the rule order
+        and unrouted mail is re-routed.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filter_ids:
+                  type: array
+                  items: {type: string}
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [imported, skipped]
+                properties:
+                  imported:
+                    type: array
+                    items:
+                      type: object
+                      required: [filter_id, rule_id]
+                      properties:
+                        filter_id: {type: string}
+                        rule_id: {type: string, format: uuid}
+                  skipped:
+                    type: array
+                    items:
+                      type: object
+                      required: [filter_id, reason]
+                      properties:
+                        filter_id: {type: string}
+                        reason: {type: string}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "502": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+  /v1/cloudflare/domains:
+    get:
+      tags: [cloudflare]
+      operationId: listCloudflareDomains
+      summary: Domains (Cloudflare zones) you can turn into businesses, with their Email Routing state
+      description: |
+        `routing`: `ok` (catch-all runs the Inbox worker), `to_email` (sends straight to an address), `none` (routing off,
+        catch-all disabled, dropping or running another worker), `unknown` (zone not active or the check failed).
+        `selectable` = active zone, routing `ok`, not already a business (OB02 switch). 503 `cloudflare_not_configured`
+        when the server has no Cloudflare token; 502 `cloudflare_unauthorized` / `cloudflare_unavailable`.
+      responses:
+        "200":
+          description: Domains sorted by name
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [domains]
+                properties:
+                  domains:
+                    type: array
+                    items: {$ref: "#/components/schemas/CloudflareDomain"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "502": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/cloudflare/domains/{zone_id}:check:
+    post:
+      tags: [cloudflare]
+      operationId: checkCloudflareDomain
+      summary: Re-check one zone's routing (after the user fixed it in Cloudflare)
+      parameters:
+        - {name: zone_id, in: path, required: true, schema: {type: string}}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "200":
+          description: Current state
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CloudflareDomain"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "502": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/businesses/{id}/routing:check:
+    post:
+      tags: [businesses]
+      operationId: checkBusinessRouting
+      summary: Re-check a business's Email Routing now and store the result
+      description: |
+        Updates `routing` on the business and emits `health.changed` when it changed. 409 `cloudflare_zone_unknown`
+        when the domain is not a zone in the connected Cloudflare account.
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [business_id, routing, checked_at]
+                properties:
+                  business_id: {type: string, format: uuid}
+                  routing: {type: string, enum: [ok, to_email, none, unknown]}
+                  checked_at: {type: string, format: date-time}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "502": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: What is working and what needs you
+      description: |
+        Computed on request. Check ids: `mail_arriving` (one per enabled business, `business_id` set), `worker`,
+        `gmail`, `queue`, `alfather`. `state` per check: ok, warn, error, off (not set up; never counts against the
+        overall state). Overall `needs_you` when any check is warn or error. `fix_route` is an app route id:
+        `gmail`, `business/<uuid>/routing` or `alfather`; null when there is nothing to open.
+      responses:
+        "200":
+          description: Report
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HealthReport"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+  /v1/backfills:estimate:
+    get:
+      tags: [backfill]
+      operationId: estimateBackfill
+      summary: How much older mail Gmail has for each business (OB09 "About 3,200 messages")
+      description: |
+        Give `days` (1-3650) or `since` (YYYY-MM-DD), not both. `businesses` is a comma-separated list of ids
+        (default: all enabled businesses). The numbers are Gmail's `resultSizeEstimate` for mail addressed to the
+        business's domain, without your own sent mail. `eta_seconds` assumes about 10 messages a second.
+        Errors - 400 invalid_range / invalid_business, 404 unknown business, Gmail errors as for /gmail/labels.
+      parameters:
+        - {name: days, in: query, schema: {type: integer, minimum: 1, maximum: 3650}}
+        - {name: since, in: query, schema: {type: string, format: date}}
+        - {name: businesses, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: Estimate
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [since, businesses, total, eta_seconds]
+                properties:
+                  since: {type: string, format: date}
+                  total: {type: integer}
+                  eta_seconds: {type: integer}
+                  businesses:
+                    type: array
+                    items:
+                      type: object
+                      required: [business_id, name, domain, estimate]
+                      properties:
+                        business_id: {type: string, format: uuid}
+                        name: {type: string}
+                        domain: {type: string}
+                        estimate: {type: integer}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "502": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/backfills:
+    get:
+      tags: [backfill]
+      operationId: listBackfills
+      summary: All imports of older mail, newest first
+      responses:
+        "200":
+          description: Backfills
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [backfills]
+                properties:
+                  backfills:
+                    type: array
+                    items: {$ref: "#/components/schemas/Backfill"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+    post:
+      tags: [backfill]
+      operationId: createBackfill
+      summary: Start importing older mail (one backfill per business)
+      description: |
+        Requires a connected Gmail account (409 gmail_not_connected / gmail_needs_reauth). Fails as a whole with
+        409 `backfill_active` if any chosen business already has an unfinished import. Mail is matched to a business
+        from Delivered-To, X-Original-To, To and Cc; mail on no managed domain is skipped. Already stored mail is
+        skipped (safe to re-run a range). Imported mail only gets its Gmail label: never archived or marked read.
+        Progress arrives as `job.progress` events.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Exactly one of days / since.
+              properties:
+                days: {type: integer, minimum: 1, maximum: 3650}
+                since: {type: string, format: date}
+                business_ids:
+                  type: array
+                  items: {type: string, format: uuid}
+                  description: Default all enabled businesses
+      responses:
+        "201":
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [backfills]
+                properties:
+                  backfills:
+                    type: array
+                    items: {$ref: "#/components/schemas/Backfill"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "502": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/backfills/{id}:pause:
+    post:
+      tags: [backfill]
+      operationId: pauseBackfill
+      summary: Pause a queued or running import
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "200":
+          description: The backfill (status paused, pause_reason user)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Backfill"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/backfills/{id}:resume:
+    post:
+      tags: [backfill]
+      operationId: resumeBackfill
+      summary: Resume a paused import (also skips a rate-limit wait)
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "200":
+          description: The backfill (status queued)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Backfill"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+
+  /v1/backfills/{id}:cancel:
+    post:
+      tags: [backfill]
+      operationId: cancelBackfill
+      summary: Stop an import; what was imported stays
+      parameters:
+        - {$ref: "#/components/parameters/Id"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "200":
+          description: The backfill (status cancelled)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Backfill"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+  /v1/prefs:
+    get:
+      tags: [settings]
+      operationId: getPrefs
+      summary: Privacy and display preferences
+      responses:
+        "200":
+          description: Preferences (defaults on a fresh server)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Prefs"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+    put:
+      tags: [settings]
+      operationId: putPrefs
+      summary: Update preferences (partial; omitted fields are unchanged)
+      description: |
+        `retention_days: null` keeps mail forever; otherwise 7-3650 and mail older than that is deleted every night
+        at 03:00 UTC along with its raw copy and attachments. `image_allow_senders` replaces the whole list (entries
+        are lower-cased, de-duplicated and sorted; each is `name@host` or `@domain`/`domain.tld`).
+        `preview_lines` is 1-4. 422 `invalid_prefs` names the bad `field`; nothing is changed on error.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                retention_days: {type: [integer, "null"], minimum: 7, maximum: 3650}
+                image_allow_senders:
+                  type: array
+                  items: {type: string}
+                preview_lines: {type: integer, minimum: 1, maximum: 4}
+      responses:
+        "200":
+          description: The new preferences
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Prefs"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "422": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/data:confirm:
+    post:
+      tags: [settings]
+      operationId: confirmDataDelete
+      summary: Get the code that DELETE /data needs
+      description: |
+        Returns a short code like `DELETE-4F7K2M9Q` that the person types to confirm. Valid for 5 minutes and
+        replaced by the next call to this endpoint.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "200":
+          description: Confirmation code
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, expires_at, expires_in]
+                properties:
+                  token: {type: string, examples: ["DELETE-4F7K2M9Q"]}
+                  expires_at: {type: string, format: date-time}
+                  expires_in: {type: integer}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/data:
+    delete:
+      tags: [settings]
+      operationId: deleteAllData
+      summary: Delete every stored copy of your mail
+      description: |
+        Removes all messages, attachments, the search index and the raw copies (including stray objects), the
+        processing log and finished import records. Kept - businesses, rules, preferences, devices, the Gmail
+        connection, and all mail in Gmail itself. Needs the code from `POST /data:confirm` in the body.
+        403 `confirmation_invalid` when it is wrong, expired or already used. Cannot be undone.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm: {type: string}
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted_messages, deleted_blobs]
+                properties:
+                  deleted_messages: {type: integer}
+                  deleted_blobs: {type: integer}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+  /v1/alfather/pairings:
+    post:
+      tags: [alfather]
+      operationId: pairAlfather
+      summary: Pair Alfather (replaces any earlier pairing)
+      description: |
+        Creates the reader token Alfather uses to connect to the server's MCP endpoint (D-006: Alfather connects
+        out). The token is shown once; the app hands `mcp_url` and `token` to Alfather over the local network
+        (OB10/OB11). By default Alfather starts at the newest message; `include_existing: true` lets it read the
+        mail already stored. Backfilled history, your own sent mail and failed items are never offered.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                include_existing: {type: boolean, default: false}
+      responses:
+        "201":
+          description: Paired
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [consumer_id, mcp_url, token, scope, include_existing]
+                properties:
+                  consumer_id: {type: string, format: uuid}
+                  mcp_url: {type: string, format: uri}
+                  token: {type: string, description: "Bearer token for /mcp, e.g. alf_..."}
+                  scope: {type: string, const: mail.read}
+                  include_existing: {type: boolean}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/alfather/status:
+    get:
+      tags: [alfather]
+      operationId: alfatherStatus
+      summary: Is Alfather paired, connected, and how much is waiting
+      description: |
+        `connected` = Alfather called the MCP endpoint in the last 5 minutes. `waiting` = mail after its cursor
+        ("Waiting to be read: 41"). Mail is never held back by Alfather.
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [paired, connected, paired_at, last_seen_at, waiting, cursor_seq, mcp_url]
+                properties:
+                  paired: {type: boolean}
+                  connected: {type: boolean}
+                  paired_at: {type: [string, "null"], format: date-time}
+                  last_seen_at: {type: [string, "null"], format: date-time}
+                  waiting: {type: integer}
+                  cursor_seq: {type: integer}
+                  mcp_url: {type: [string, "null"]}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /v1/alfather:
+    delete:
+      tags: [alfather]
+      operationId: unpairAlfather
+      summary: Unpair Alfather (its token stops working immediately)
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "204": {description: Unpaired (also when nothing was paired)}
+        "401": {$ref: "#/components/responses/Problem"}
+        "429": {$ref: "#/components/responses/Problem"}
+
+  /mcp:
+    post:
+      tags: [alfather]
+      operationId: mcp
+      summary: MCP server for Alfather (streamable HTTP, JSON responses)
+      description: |
+        JSON-RPC 2.0 over POST, authenticated with the Alfather token from `POST /v1/alfather/pairings`
+        (not a device token). One message or a batch; requests get a JSON answer, notifications get 202 with no body.
+        GET answers 405: there is no server-initiated stream. Requests with a browser `Origin` are refused (403).
+        Protocol versions 2025-06-18, 2025-03-26, 2024-11-05. Methods: `initialize`, `ping`, `tools/list`, `tools/call`.
+
+        Tools (results carry the same JSON as `structuredContent` and as one text content item; tool failures set
+        `isError: true`, bad arguments are JSON-RPC error -32602):
+        - `next_messages {limit?: 1-50 = 20}` -> `{messages, cursor_seq, has_more, waiting}`; messages after the
+          cursor, oldest first; does not move the cursor.
+        - `ack {up_to_seq}` -> `{cursor_seq, waiting}`; the cursor only moves forward; a seq beyond the newest
+          message is an error.
+        - `get_message {id}` -> one message in full (text up to 100,000 chars) plus `thread`, `message_id_header`,
+          `auth_results`.
+        - `search {query, business?, limit?: 1-50 = 20}` -> `{results}`, newest first, archived and historical mail
+          included, text cut to 500 characters.
+
+        A message is `{id, seq, received_at, direction, business: {id,name,domain}|null, route, rule, from: {name,address},
+        to, to_local, subject, text (cut at 20,000 chars with text_truncated), attachments: [{filename,mime,size_bytes}],
+        is_read, archived, thread_key}`.
+      security: []
+      parameters:
+        - {name: Authorization, in: header, required: true, schema: {type: string, description: "Bearer alf_..."}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              description: A JSON-RPC 2.0 request, notification, or an array of them.
+      responses:
+        "200":
+          description: JSON-RPC response (or array for a batch)
+          content:
+            application/json:
+              schema: {}
+        "202": {description: Only notifications or responses were sent}
+        "400":
+          description: Not JSON / empty (JSON-RPC parse error body)
+          content:
+            application/json:
+              schema: {}
+        "401":
+          description: Missing or wrong token
+          content:
+            application/json:
+              schema: {}
+        "403":
+          description: Browser origin refused
+          content:
+            application/json:
+              schema: {}
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Device token from POST /v1/auth/login. Rate limited per device (429 rate_limited, Retry-After).
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        The first request with a key claims it before running; its response is stored (24 hours, per device) and
+        replayed for later requests with the same key (header `Idempotency-Replayed: true`). A request that arrives
+        while the first is still running is refused with 409 `request_in_progress` and `Retry-After: 1`: retry it
+        and you get the stored response. Responses with status 5xx are not stored and release the key, so the
+        same key can be retried after a server error. An abandoned claim (server crash) expires after 2 minutes.
+        Max 255 characters (otherwise 400 invalid_idempotency_key).
+      schema: {type: string, maxLength: 255}
+  responses:
+    Problem:
+      description: Error (application/problem+json)
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: {type: string, examples: ["about:blank"]}
+        title: {type: string, description: HTTP status text}
+        status: {type: integer}
+        code:
+          type: string
+          description: Stable machine-readable error code.
+          enum:
+            - blob_unavailable
+            - body_too_large
+            - empty_query
+            - enqueue_failed
+            - internal
+            - invalid_body
+            - invalid_business
+            - invalid_cursor
+            - invalid_id
+            - invalid_idempotency_key
+            - invalid_credentials
+            - invalid_ids
+            - invalid_limit
+            - invalid_op
+            - invalid_payload
+            - invalid_query
+            - invalid_request
+            - invalid_rule
+            - invalid_signature
+            - invalid_unread
+            - device_not_found
+            - domain_taken
+            - needs_gmail
+            - not_found
+            - parse_failed
+            - query_too_long
+            - queue_unavailable
+            - rate_limited
+            - raw_unavailable
+            - rule_disabled
+            - rule_pattern_invalid
+            - unauthorized
+            - request_in_progress
+            - confirmation_invalid
+            - invalid_prefs
+            - not_in_gmail
+            - backfill_bad_state
+            - backfill_active
+            - invalid_range
+            - domain_not_in_cloudflare
+            - cloudflare_zone_unknown
+            - cloudflare_unavailable
+            - cloudflare_unauthorized
+            - cloudflare_not_configured
+            - invalid_label
+            - gmail_unavailable
+            - gmail_rate_limited
+            - gmail_scope_missing
+            - gmail_needs_reauth
+            - gmail_nothing_to_retry
+            - gmail_not_connected
+            - gmail_not_configured
+        detail: {type: string}
+        field: {type: string, description: "Offending field (rule validation errors)"}
+        column: {type: integer, description: "1-based character position within the field's value"}
+        errors:
+          type: array
+          description: Every validation problem found (rule validation errors)
+          items: {$ref: "#/components/schemas/RuleFieldError"}
+    RuleFieldError:
+      type: object
+      required: [field, message]
+      properties:
+        field: {type: string}
+        message: {type: string}
+        column: {type: integer}
+    Status:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, enum: [ok, ready, unavailable]}
+    NotifyPayload:
+      type: object
+      required: [key, env_from, env_to, raw_size, received_at, message_id]
+      properties:
+        key: {type: [string, "null"], description: 'Object key starting with "raw/", or null with reason store_failed'}
+        reason: {type: string, enum: [store_failed]}
+        env_from: {type: string}
+        env_to: {type: string}
+        raw_size: {type: integer, format: int64}
+        received_at: {type: string, format: date-time}
+        message_id: {type: string}
+    LoginRequest:
+      type: object
+      required: [password]
+      properties:
+        password: {type: string, description: The server's OWNER_PASSWORD}
+        device_name: {type: string, maxLength: 100, description: Shown in the device list, for example "Casprine's iPhone"}
+    LoginResponse:
+      type: object
+      required: [device_id, token]
+      properties:
+        device_id: {type: string, format: uuid}
+        token: {type: string, description: Bearer token, returned once}
+    Rule:
+      type: object
+      required: [id, name, position, enabled, business_id, match_to_local, match_from, match_subject, gmail_label,
+        gmail_archive, gmail_mark_read, label_only, imported_from_filter, message_count, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        position: {type: integer, description: Priority; lowest wins}
+        enabled: {type: boolean}
+        business_id: {type: [string, "null"], format: uuid, description: null = any business}
+        match_to_local: {type: [string, "null"], description: 'Recipient name before @, plus-tags ignored; "*" is a wildcard; null = any'}
+        match_from: {type: [string, "null"], description: 'a@b.com or @b.com; null = anyone'}
+        match_subject: {type: [string, "null"], description: RE2 regular expression, case-insensitive; null = any}
+        gmail_label: {type: [string, "null"]}
+        gmail_archive: {type: boolean}
+        gmail_mark_read: {type: boolean}
+        label_only: {type: boolean, description: When true, archive and mark-read are not applied in Gmail}
+        imported_from_filter: {type: [string, "null"]}
+        message_count: {type: integer, description: Messages currently routed by this rule}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    RuleList:
+      type: object
+      required: [rules]
+      properties:
+        rules:
+          type: array
+          items: {$ref: "#/components/schemas/Rule"}
+    RuleInput:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        id: {type: string, format: uuid, description: Test only. The existing rule this draft edits}
+        name: {type: string, maxLength: 100}
+        enabled: {type: boolean, default: true}
+        business_id: {type: [string, "null"], format: uuid}
+        match_to_local: {type: [string, "null"]}
+        match_from: {type: [string, "null"]}
+        match_subject: {type: [string, "null"]}
+        gmail_label: {type: [string, "null"]}
+        gmail_archive: {type: boolean, default: false}
+        gmail_mark_read: {type: boolean, default: false}
+        label_only: {type: boolean, default: true}
+    RulePatch:
+      type: object
+      additionalProperties: false
+      properties:
+        name: {type: string, maxLength: 100}
+        enabled: {type: boolean}
+        business_id: {type: [string, "null"], format: uuid}
+        match_to_local: {type: [string, "null"]}
+        match_from: {type: [string, "null"]}
+        match_subject: {type: [string, "null"]}
+        gmail_label: {type: [string, "null"]}
+        gmail_archive: {type: boolean}
+        gmail_mark_read: {type: boolean}
+        label_only: {type: boolean}
+    RuleMessageRef:
+      type: object
+      required: [id, business_id, to_local, from_addr, from_name, subject, received_at]
+      properties:
+        id: {type: string, format: uuid}
+        business_id: {type: [string, "null"], format: uuid}
+        to_local: {type: [string, "null"]}
+        from_addr: {type: [string, "null"]}
+        from_name: {type: [string, "null"]}
+        subject: {type: [string, "null"]}
+        received_at: {type: string, format: date-time}
+    RuleTestResult:
+      type: object
+      required: [scope, scanned, would_match, caught_earlier]
+      properties:
+        scope: {type: string, enum: [all, unrouted]}
+        scanned: {type: integer}
+        would_match:
+          type: array
+          items: {$ref: "#/components/schemas/RuleMessageRef"}
+        caught_earlier:
+          type: array
+          items:
+            type: object
+            required: [message, by_rule]
+            properties:
+              message: {$ref: "#/components/schemas/RuleMessageRef"}
+              by_rule:
+                type: object
+                required: [id, name]
+                properties:
+                  id: {type: string, format: uuid}
+                  name: {type: string}
+    Address:
+      type: object
+      required: [local_part, count, last_at]
+      properties:
+        local_part: {type: string}
+        count: {type: integer}
+        last_at: {type: [string, "null"], format: date-time}
+    Business:
+      type: object
+      required: [id, name, domain, sort_order, hidden, enabled, routing, unread, last_message_at, addresses]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        domain: {type: string}
+        sort_order: {type: integer}
+        hidden: {type: boolean}
+        enabled: {type: boolean}
+        routing: {type: string}
+        unread: {type: integer}
+        last_message_at: {type: [string, "null"], format: date-time}
+        addresses:
+          type: array
+          items: {$ref: "#/components/schemas/Address"}
+    BusinessList:
+      type: object
+      required: [businesses]
+      properties:
+        businesses:
+          type: array
+          items: {$ref: "#/components/schemas/Business"}
+    CreateBusinessRequest:
+      type: object
+      required: [name, domain]
+      additionalProperties: false
+      properties:
+        name: {type: string, minLength: 1}
+        domain: {type: string, description: Lowercased FQDN, pattern: '^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$'}
+        cf_zone_id: {type: string}
+    PatchBusinessRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: {type: string, minLength: 1}
+        hidden: {type: boolean}
+        enabled: {type: boolean}
+    Message:
+      type: object
+      required: [id, business_id, direction, from_addr, from_name, subject, snippet, to_local, to_tag, received_at, is_read, archived, attachment_count, thread_key, route]
+      properties:
+        id: {type: string, format: uuid}
+        business_id: {type: [string, "null"], format: uuid}
+        direction: {type: string, description: '"in" or "out"'}
+        from_addr: {type: [string, "null"]}
+        from_name: {type: [string, "null"]}
+        subject: {type: [string, "null"]}
+        snippet: {type: [string, "null"]}
+        to_local: {type: [string, "null"]}
+        to_tag: {type: [string, "null"]}
+        received_at: {type: string, format: date-time}
+        is_read: {type: boolean}
+        archived: {type: boolean}
+        attachment_count: {type: integer}
+        thread_key: {type: string}
+        route: {type: string}
+    MessagePage:
+      type: object
+      required: [messages, next_cursor]
+      properties:
+        messages:
+          type: array
+          items: {$ref: "#/components/schemas/Message"}
+        next_cursor: {type: [string, "null"], description: Pass as `cursor` for the next page; null on the last page}
+    Attachment:
+      type: object
+      required: [id, filename, mime, size_bytes, content_id, inline]
+      properties:
+        id: {type: string, format: uuid}
+        filename: {type: [string, "null"]}
+        mime: {type: [string, "null"]}
+        size_bytes: {type: [integer, "null"]}
+        content_id: {type: [string, "null"]}
+        inline: {type: boolean}
+    MessageDetail:
+      type: object
+      required: [message, thread, attachments, details]
+      properties:
+        message: {$ref: "#/components/schemas/Message"}
+        thread:
+          type: array
+          items: {$ref: "#/components/schemas/Message"}
+        attachments:
+          type: array
+          items: {$ref: "#/components/schemas/Attachment"}
+        details:
+          type: object
+          required: [business, address, rule_name, gmail, gmail_id, failure_reason, labels, size_bytes, received_at]
+          properties:
+            gmail_id: {type: [string, "null"], description: Gmail message id once found; used for the Open in Gmail link}
+            failure_reason: {$ref: "#/components/schemas/FailureReason"}
+            business:
+              type: [object, "null"]
+              required: [id, name, domain]
+              properties:
+                id: {type: string, format: uuid}
+                name: {type: string}
+                domain: {type: [string, "null"]}
+            address: {type: [string, "null"], description: Envelope recipient}
+            rule_name: {type: [string, "null"]}
+            gmail:
+              type: [object, "null"]
+              required: [state, last_error, attempts, last_attempt_at, last_synced_at]
+              description: Null when the message has no Gmail work queued (never routed with Gmail actions, never archived).
+              properties:
+                state: {type: string, enum: [pending, synced, not_found, failed, paused], description: "paused = Gmail is signed out or not connected; resumes on reconnect"}
+                last_error: {type: [string, "null"]}
+                attempts: {type: integer, description: Failed tries so far (6 = gave up as not_found)}
+                last_attempt_at: {type: [string, "null"], format: date-time}
+                last_synced_at: {type: [string, "null"], format: date-time}
+            labels:
+              type: array
+              items: {type: string}
+            size_bytes: {type: [integer, "null"]}
+            received_at: {type: string, format: date-time}
+    MessageBody:
+      type: object
+      required: [html, text, remote_image_count, auth_results, inline]
+      properties:
+        html: {type: [string, "null"], description: Unsanitised HTML; the client must render with JS off and remote loads blocked}
+        text: {type: [string, "null"]}
+        remote_image_count: {type: integer}
+        auth_results:
+          type: object
+          required: [spf, dkim, dmarc]
+          properties:
+            spf: {type: string}
+            dkim: {type: string}
+            dmarc: {type: string}
+        inline:
+          type: array
+          items:
+            type: object
+            required: [cid, attachment_id, mime]
+            properties:
+              cid: {type: string}
+              attachment_id: {type: [string, "null"], format: uuid}
+              mime: {type: string}
+    Span:
+      type: object
+      required: [start, end]
+      properties:
+        start: {type: integer, description: Rune offset}
+        end: {type: integer, description: Rune offset, exclusive}
+    SearchResult:
+      type: object
+      required: [id, business_id, from_addr, from_name, subject, snippet, received_at, is_read, archived, attachment_count, thread_key, highlights]
+      properties:
+        id: {type: string, format: uuid}
+        business_id: {type: [string, "null"], format: uuid}
+        from_addr: {type: [string, "null"]}
+        from_name: {type: [string, "null"]}
+        subject: {type: [string, "null"]}
+        snippet: {type: [string, "null"]}
+        received_at: {type: string, format: date-time}
+        is_read: {type: boolean}
+        archived: {type: boolean}
+        attachment_count: {type: integer}
+        thread_key: {type: string}
+        highlights:
+          type: object
+          required: [subject, from, snippet]
+          properties:
+            subject: {type: array, items: {$ref: "#/components/schemas/Span"}}
+            from: {type: array, items: {$ref: "#/components/schemas/Span"}}
+            snippet: {type: array, items: {$ref: "#/components/schemas/Span"}}
+    BusinessRef:
+      type: object
+      required: [id, name, domain]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        domain: {type: string}
+    SearchGroup:
+      type: object
+      required: [business, total, messages]
+      properties:
+        business: {oneOf: [{$ref: "#/components/schemas/BusinessRef"}, {type: "null"}], description: null for unassigned mail}
+        total: {type: integer}
+        messages:
+          type: array
+          items: {$ref: "#/components/schemas/SearchResult"}
+    SearchResponse:
+      type: object
+      required: [groups, total, has_more, next_cursor, parsed]
+      properties:
+        groups:
+          type: array
+          items: {$ref: "#/components/schemas/SearchGroup"}
+        total: {type: integer, description: Results on this page}
+        has_more: {type: boolean}
+        next_cursor: {type: [string, "null"], description: Null on the last page}
+        parsed:
+          type: object
+          required: [words, phrases, prefix, from, to, has_attachment, terms]
+          properties:
+            words: {type: array, items: {type: string}}
+            phrases: {type: array, items: {type: string}}
+            prefix: {type: string}
+            from: {type: array, items: {type: string}}
+            to: {type: array, items: {type: string}}
+            has_attachment: {type: boolean}
+            terms: {type: array, items: {type: string}}
+    Recents:
+      type: object
+      required: [recents]
+      properties:
+        recents:
+          type: array
+          items: {type: string}
+    AttentionSummary:
+      type: object
+      required: [unrouted, failed, total]
+      properties:
+        unrouted:
+          type: object
+          required: [count, by_business]
+          properties:
+            count: {type: integer}
+            by_business:
+              type: array
+              items:
+                type: object
+                required: [business_id, name, count]
+                properties:
+                  business_id: {type: [string, "null"], format: uuid}
+                  name: {type: [string, "null"]}
+                  count: {type: integer}
+        failed:
+          type: object
+          required: [count]
+          properties:
+            count: {type: integer}
+        total: {type: integer}
+    UnroutedList:
+      type: object
+      required: [groups, total]
+      properties:
+        groups:
+          type: array
+          items:
+            type: object
+            required: [business, count, messages]
+            properties:
+              business: {oneOf: [{$ref: "#/components/schemas/BusinessRef"}, {type: "null"}]}
+              count: {type: integer}
+              messages:
+                type: array
+                items: {$ref: "#/components/schemas/Message"}
+        total: {type: integer}
+    FailedMessage:
+      allOf:
+        - $ref: "#/components/schemas/Message"
+        - type: object
+          required: [failure_reason, env_to, size_bytes, has_raw]
+          properties:
+            failure_reason: {$ref: "#/components/schemas/FailureReason"}
+            env_to: {type: [string, "null"]}
+            size_bytes: {type: [integer, "null"]}
+            has_raw: {type: boolean}
+    Event:
+      type: object
+      required: [type]
+      description: |
+        Envelope; type-specific fields are flattened beside `type`.
+        `mail.new`: message_id, and (when the message is found) business_id, route, state, received_at.
+        `gmail.status`: state (not_connected|connected|needs_reauth), email, waiting.
+        `health.changed`: reason (routing|snapshot), plus business_id/routing or state; refetch GET /health.
+        `job.progress`: job=backfill, backfill_id, business_id, status, estimated, scanned, imported, sorted, unrouted, skipped, paused_until (sent after every page and on every state change).
+      properties:
+        type: {type: string, enum: [mail.new, gmail.status, job.progress, health.changed]}
+        message_id: {type: string}
+        business_id: {type: [string, "null"], format: uuid}
+        route: {type: string}
+        state: {type: string}
+        received_at: {type: string, format: date-time}
+      additionalProperties: true
+    GmailStatus:
+      type: object
+      required: [state, email, connected_at, last_write_at, waiting, rate_limited_until, configured]
+      properties:
+        state: {type: string, enum: [not_connected, connected, needs_reauth]}
+        email: {type: [string, "null"]}
+        connected_at: {type: [string, "null"], format: date-time}
+        last_write_at: {type: [string, "null"], format: date-time}
+        waiting: {type: integer, description: Write-backs not yet applied in Gmail (pending or paused)}
+        rate_limited_until: {type: [string, "null"], format: date-time, description: Set while Gmail rate limits pause write-backs (GM09); they resume by themselves}
+        configured: {type: boolean, description: False when the server has no Google OAuth client or token key}
+    FailureReason:
+      type: [string, "null"]
+      enum: [store_failed, parse_failed, null]
+      description: |
+        Why a message is in Failed (null otherwise). `store_failed`: the edge worker could not save the raw mail
+        (retry only works when the original can be fetched from Gmail, otherwise 409 needs_gmail).
+        `parse_failed`: the saved mail could not be read; retrying will fail again, so hide Retry.
+    GmailLabel:
+      type: object
+      required: [name, id]
+      properties:
+        name: {type: string, examples: ["Acme/Invoices"]}
+        id: {type: string}
+    GmailLabelResult:
+      type: object
+      required: [name, id, created]
+      properties:
+        name: {type: string}
+        id: {type: string}
+        created: {type: boolean}
+    GmailFilter:
+      type: object
+      required: [id, from, to, subject, label, archive, mark_read, delete, forward, importable, reason, already_imported, rule]
+      properties:
+        id: {type: string}
+        from: {type: [string, "null"]}
+        to: {type: [string, "null"]}
+        subject: {type: [string, "null"]}
+        label: {type: [string, "null"], description: The label the filter applies (first by name if several)}
+        archive: {type: boolean, description: Filter skips the inbox. Not imported (rules are label-only)}
+        mark_read: {type: boolean}
+        delete: {type: boolean}
+        forward: {type: [string, "null"]}
+        importable: {type: boolean}
+        reason:
+          type: [string, "null"]
+          enum: [deletes_mail, forwards_mail, no_label, unsupported_criteria, unmanaged_domain, null]
+        already_imported: {type: boolean}
+        rule:
+          type: [object, "null"]
+          description: The rule an import would create
+          required: [name, business_id, match_to_local, match_from, match_subject, gmail_label]
+          properties:
+            name: {type: string}
+            business_id: {type: [string, "null"], format: uuid}
+            match_to_local: {type: [string, "null"]}
+            match_from: {type: [string, "null"]}
+            match_subject: {type: [string, "null"], description: RE2, already escaped}
+            gmail_label: {type: string}
+    CloudflareDomain:
+      type: object
+      required: [zone_id, domain, status, routing, already_added, selectable]
+      properties:
+        zone_id: {type: string}
+        domain: {type: string}
+        status: {type: string, description: Cloudflare zone status (active, pending, ...)}
+        routing: {type: string, enum: [ok, to_email, none, unknown]}
+        already_added: {type: boolean}
+        selectable: {type: boolean}
+    HealthReport:
+      type: object
+      required: [state, checked_at, checks]
+      properties:
+        state: {type: string, enum: [ok, needs_you]}
+        checked_at: {type: string, format: date-time}
+        checks:
+          type: array
+          items:
+            type: object
+            required: [id, business_id, title, state, message, fix_route]
+            properties:
+              id: {type: string, enum: [mail_arriving, worker, gmail, queue, alfather]}
+              business_id: {type: [string, "null"], format: uuid}
+              title: {type: string}
+              state: {type: string, enum: [ok, warn, error, off]}
+              message: {type: string, description: Plain words for the row}
+              fix_route: {type: [string, "null"], description: "App route id that fixes it: gmail, business/<uuid>/routing, alfather"}
+    Backfill:
+      type: object
+      required: [id, business_id, business_name, domain, since, status, estimated, scanned, imported, sorted, unrouted, skipped, paused_until, pause_reason, last_error, created_at, started_at, finished_at]
+      properties:
+        id: {type: string, format: uuid}
+        business_id: {type: string, format: uuid}
+        business_name: {type: string}
+        domain: {type: string}
+        since: {type: string, format: date}
+        status: {type: string, enum: [queued, running, paused, done, failed, cancelled]}
+        estimated: {type: [integer, "null"], description: Gmail's estimate when the import was created}
+        scanned: {type: integer, description: Gmail messages looked at}
+        imported: {type: integer}
+        sorted: {type: integer, description: Imported and routed to a rule}
+        unrouted: {type: integer, description: Imported but matched no rule}
+        skipped: {type: integer, description: Already stored, or on no managed domain}
+        paused_until: {type: [string, "null"], format: date-time, description: Set while waiting out a Gmail rate limit; the import resumes by itself}
+        pause_reason:
+          type: [string, "null"]
+          enum: [rate_limited, gmail_signed_out, user, null]
+          description: Why status is paused. gmail_signed_out resumes by itself when Gmail is reconnected.
+        last_error: {type: [string, "null"], description: Set when status is failed}
+        created_at: {type: string, format: date-time}
+        started_at: {type: [string, "null"], format: date-time}
+        finished_at: {type: [string, "null"], format: date-time}
+    Prefs:
+      type: object
+      required: [retention_days, image_allow_senders, preview_lines]
+      properties:
+        retention_days: {type: [integer, "null"], description: Null keeps mail forever}
+        image_allow_senders:
+          type: array
+          items: {type: string}
+        preview_lines: {type: integer, minimum: 1, maximum: 4, default: 2}

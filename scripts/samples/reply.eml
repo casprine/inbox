@@ -1,0 +1,13 @@
+From: Dana Client <dana@client.test>
+To: orders@acme-demo.test
+Subject: Re: Question about last month
+Message-ID: <sample-reply@client.test>
+In-Reply-To: <earlier-thread@acme-demo.test>
+References: <earlier-thread@acme-demo.test>
+Date: Fri, 16 Oct 2026 10:05:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Thanks for the quick answer, that works for us.
+
+Dana

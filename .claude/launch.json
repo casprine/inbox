@@ -1,0 +1,1 @@
+{"version":"0.0.1","configurations":[{"name":"design-preview","runtimeExecutable":"python3","runtimeArgs":["-m","http.server","8791","--directory","/Users/casprine/Desktop/vendor/personal/inbox/design/out11"],"port":8791}]}

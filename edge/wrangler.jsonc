@@ -1,0 +1,12 @@
+{
+  "name": "inbox-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "r2_buckets": [{ "binding": "RAW", "bucket_name": "inbox-mail" }],
+  // Secrets (wrangler secret put): INGEST_SECRET
+  // INGEST_URL is the Tailscale Funnel address of the ingest listener (docs/DEPLOY.md), https://<machine>.<tailnet>.ts.net:8443/ingest/v1/notify
+  "vars": {
+    "FORWARD_TO": "you@gmail.com",
+    "INGEST_URL": "https://your-mac-mini.your-tailnet.ts.net:8443/ingest/v1/notify"
+  }
+}

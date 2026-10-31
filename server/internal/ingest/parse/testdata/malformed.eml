@@ -1,0 +1,10 @@
+From: Weird <weird@example.org
+To: a@mydomain.com
+Subject: Broken
+Message-ID: <bad-1@example.org>
+Content-Type: multipart/mixed; boundary="zz"
+
+--zz
+Content-Type: text/plain
+
+Recoverable body, no closing boundary

@@ -1,0 +1,18 @@
+From: x@example.org
+To: a@mydomain.com
+Subject: Invoice attached
+Message-ID: <att-1@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="m1"
+
+--m1
+Content-Type: text/plain; charset=utf-8
+
+See attached.
+--m1
+Content-Type: application/pdf; name="invoice.pdf"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="invoice.pdf"
+
+SGVsbG8gUERG
+--m1--

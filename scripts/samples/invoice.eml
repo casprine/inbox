@@ -1,0 +1,27 @@
+From: Billing <billing@brightpay.example>
+To: Acme Studio <orders@acme-demo.test>
+Subject: Invoice INV-2041 for October
+Message-ID: <sample-invoice@brightpay.example>
+Date: Fri, 16 Oct 2026 09:30:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="sample-bnd"
+
+--sample-bnd
+Content-Type: text/plain; charset=utf-8
+
+Hi,
+
+Invoice INV-2041 (EUR 480.00, due 30 October) is attached.
+
+Thanks,
+BrightPay
+
+--sample-bnd
+Content-Type: application/pdf; name="INV-2041.pdf"
+Content-Disposition: attachment; filename="INV-2041.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjEKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+ZW5kb2JqCjIgMCBvYmo8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PmVuZG9iagozIDAgb2JqPDwvVHlwZS9QYWdlL1BhcmVudCAyIDAgUi9NZWRpYUJveFswIDAgMjAwIDIwMF0+PmVuZG9iagp0cmFpbGVyPDwvUm9vdCAxIDAgUj4+CiUlRU9GCg==
+
+--sample-bnd--
+

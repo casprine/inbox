@@ -1,0 +1,18 @@
+From: News <news@example.org>
+To: a@mydomain.com, "B Person" <b@mydomain.com>
+Cc: c@mydomain.com
+Subject: Weekly digest
+Date: Tue, 06 Jan 2026 08:30:00 +0000
+Message-ID: <alt-1@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b1"
+
+--b1
+Content-Type: text/plain; charset=utf-8
+
+Plain digest text
+--b1
+Content-Type: text/html; charset=utf-8
+
+<html><head><style>p{color:red}</style></head><body><p>HTML digest</p></body></html>
+--b1--

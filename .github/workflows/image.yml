@@ -1,0 +1,125 @@
+name: Server image
+
+# Builds deploy/Dockerfile for amd64+arm64 and publishes it to GitHub Container Registry as
+#   ghcr.io/<owner>/<repo>/inbox-server
+# push to main -> tags main, sha-<short>, latest   |   tag vX.Y.Z -> X.Y.Z, X.Y, sha-<short>   |   pull request -> build only
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    paths:
+      - "server/**"
+      - "deploy/**"
+      - ".github/workflows/image.yml"
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}/inbox-server
+
+jobs:
+  image:
+    name: Build, smoke test, publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      image: ${{ env.IMAGE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # GHCR image names must be lower case; github.repository can contain capitals.
+      - name: Lower-case image name
+        run: echo "IMAGE=${IMAGE,,}" >> "$GITHUB_ENV"
+
+      - name: Tags and OCI labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=pr
+          labels: |
+            org.opencontainers.image.title=Inbox server
+            org.opencontainers.image.description=Inbox: Go server for mail routing, Gmail write-back and the iPhone app API
+            org.opencontainers.image.vendor=Inbox
+            org.opencontainers.image.licenses=UNLICENSED
+
+      # Single-architecture build loaded into the runner so the image can be started before anything is published.
+      - name: Build for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          load: true
+          tags: inbox-server:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test (the binary starts and prints its usage)
+        run: |
+          out="$(docker run --rm inbox-server:smoke --help)"
+          echo "$out"
+          grep -q "usage: inboxd" <<<"$out"
+
+      - name: Build and push (amd64, arm64)
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          sbom: true
+          provenance: mode=max
+
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Smoke test the published image
+        if: github.event_name != 'pull_request'
+        run: |
+          docker run --rm "${IMAGE}@${{ steps.push.outputs.digest }}" --help | grep -q "usage: inboxd"
+
+      - name: Summary
+        if: github.event_name != 'pull_request'
+        run: |
+          {
+            echo "### Published"
+            echo '```'
+            echo "${IMAGE}@${{ steps.push.outputs.digest }}"
+            echo '```'
+            echo "Tags: ${{ steps.meta.outputs.tags }}"
+          } >> "$GITHUB_STEP_SUMMARY"

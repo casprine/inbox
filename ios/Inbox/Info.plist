@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>InboxAPIBaseURL</key>
+	<string>$(INBOX_API_BASE_URL)</string>
+	<key>InboxDevAPIBaseURL</key>
+	<string>$(INBOX_DEV_API_BASE_URL)</string>
+	<key>InboxDevToken</key>
+	<string>$(INBOX_DEV_TOKEN)</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_alfather._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Inbox looks for Alfather on your network to pair with it.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>OpenRunde-Regular.otf</string>
+		<string>OpenRunde-Medium.otf</string>
+		<string>OpenRunde-Semibold.otf</string>
+		<string>OpenRunde-Bold.otf</string>
+	</array>
+	<key>UIDesignRequiresCompatibility</key>
+	<true/>
+</dict>
+</plist>

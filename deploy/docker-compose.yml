@@ -1,0 +1,35 @@
+name: inbox
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: inbox
+      POSTGRES_PASSWORD: inbox
+      POSTGRES_DB: inbox
+    ports: ["54329:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inbox"]
+      interval: 2s
+      retries: 30
+  # MinIO's public images are no longer pullable; SeaweedFS is an S3-compatible stand-in (see DECISIONS Q-T01-1).
+  minio:
+    image: chrislusf/seaweedfs
+    command: server -dir=/data -s3 -s3.port=9000 -master.volumeSizeLimitMB=64
+    environment:
+      AWS_ACCESS_KEY_ID: minio
+      AWS_SECRET_ACCESS_KEY: minio12345
+    ports: ["9009:9000"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://$$(hostname -i):9333/cluster/status >/dev/null"]
+      interval: 2s
+      retries: 30
+  minio-init:
+    image: chrislusf/seaweedfs
+    depends_on:
+      minio: {condition: service_healthy}
+    # Stays alive (sleep) after creating the bucket so `up --wait` doesn't treat an exited container as failure.
+    entrypoint: ["/bin/sh", "-c", "echo 's3.bucket.create -name inbox-mail' | weed shell -master=minio:9333; touch /tmp/ready && exec sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/ready"]
+      interval: 2s
+      retries: 30

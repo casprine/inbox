@@ -1,0 +1,4 @@
+// Copy to Local.xcconfig, or run `make ios-local-config` from the repo root (it fills in this Mac's Wi-Fi address).
+// In an xcconfig "//" starts a comment, so a URL is written with http:/$()/ .
+INBOX_DEV_API_BASE_URL = http:/$()/192.168.1.20:18090
+INBOX_DEV_TOKEN = dev-token-inbox-local-0000

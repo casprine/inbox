@@ -1,0 +1,12 @@
+From: Alice Example <Alice@Example.com>
+To: shop+orders@mydomain.com
+Delivered-To: shop+orders@mydomain.com
+Subject: Hello there
+Date: Mon, 05 Jan 2026 10:00:00 +0000
+Message-ID: <plain-1@example.com>
+Authentication-Results: mx.example; spf=pass smtp.mailfrom=example.com; dkim=pass header.d=example.com; dmarc=pass header.from=example.com
+Content-Type: text/plain; charset=utf-8
+
+Hi,
+
+This is   a plain message.

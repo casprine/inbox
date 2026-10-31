@@ -1,0 +1,19 @@
+## 2026-10-12 S-1 Businesses Edit mode
+Built on Mail root (Edit button, drag handles, hide switch) and Settings → Businesses. No BZ02 export exists yet in docs/design-ref/; please add it (D-1) and gate S-1. Shots: ios/docs/S1-businesses-edit-{light,dark}.png (reshot after the export lands if the board differs).
+
+## 2026-10-12 Gate request S-1, S-5, S-6
+S-1 shots: ios/docs/S1-businesses-edit-*. S-5: ios/docs/S5-ax3-{business-page,message,thread}-* (Dynamic Type AX3, manual) plus baselines ios/InboxTests/Snapshots/AX3-*. S-6: ios/docs/T24-health-*, T24-appearance-*, T24-alfather-unreachable-*, T23-ob01-welcome-*, T23-ob02-domains-* (light+dark). Please write defects to docs/handoff/design-to-swift.md.
+
+## 2026-10-12 D-2 fixes applied, reshot (light+dark in ios/docs)
+- P1 BZ02: edit rows are now 56 pt rows in one 12 pt card on the 16 pt gutter (name 16.5, domain 14, 48×28 switch); the drag handle is still the system 3-line handle (a custom 6-dot handle would need a custom drag implementation). Mail-root edit mode: centred "Businesses" title, Done right, footnote above the list, tab bar hidden. Shots: S1-businesses-edit-*, T24-businesses-*.
+- P1 AX3 message header: avatar dropped at accessibility sizes, sender 2 lines, address and To one line with middle truncation. Shots: S5-ax3-message-*, S5-ax3-thread-*.
+- P1 relative dates: Alfather "Last seen yesterday, 6:40 PM" via `RelativeDay`; Business detail "Last message" uses time today / weekday / "Oct 5". Shots: T24-alfather-unreachable-*, T24-business-detail-*.
+- P2: Business page subline keeps "· 2 unread" together at large sizes (S5-ax3-business-page-*); Appearance light reshot (T24-appearance-*).
+- ios-test 158 pass, ios-ui-test 4 pass after these changes.
+
+## 2026-10-16 App icon adopted — ready to gate
+`docs/design-specs/logo/AppIcon.appiconset` copied to `ios/Inbox/Assets.xcassets/AppIcon.appiconset` (the app had no asset catalog before; 1024 px, no alpha, default/dark/tinted; `ASSETCATALOG_COMPILER_APPICON_NAME=AppIcon` set in `ios/project.yml`). Clean build succeeds, actool emits AppIcon60x60@2x. Home-screen shots: `ios/docs/appicon-home-light.png`, `ios/docs/appicon-home-dark.png` (simulator "Inbox iPhone 17 Pro"; the simulator renders the default icon in both appearances, tinted not shot).
+
+## 2026-10-31 Gate 10 request: server sign-in (D4 Part 1), A and C
+Sign in with Apple is gone; sign-in is server address + password (OB01b). Shots (light + dark, rendered by the snapshot tests, 390 x 844 with a simulated status bar and home indicator): `ios/docs/G10-signin-<state>-<light|dark>.png` for welcome, empty-new, ready, password-shown, loading, invalid-url, invalid-url-http, wrong-password, not-inbox, locked, locked-long, unreachable, unreachable-tls, unreachable-5xx, existing, signed-out; AX3 (tall 390 x 2400 renders so nothing is hidden by the fold): `G10-signin-ax3-empty`, `-ax3-locked`, `-ax3-welcome`. More AX3 states (wrong password, unreachable) are in `ios/InboxTests/Snapshots/AX3-OB01b-*`.
+Deviations to look at: (1) no "N tries left" line (backend sends no attempts_remaining); (2) the Sign in button in AX1+ sits in the scroll after the helper text as specced, the locked label "Try again in 4:32" is dimmed at .4 like any disabled button (low contrast on the red fill, spec-conform but hard to read); (3) the empty-new focus ring is drawn without a real keyboard in the shot; (4) `http://` is also accepted for 127.0.0.0/8; (5) the signed-out mode exists but no screen opens it yet (needs the Mail-root session banner, not built). Open Runde Bold is used for the sign-in title and welcome h1 only; the full D4 §2.3 type table is not applied yet, so Gate 10 B is NOT requested. Settings -> About has a one-line Open Runde / SIL OFL credit. Red text audit (C) not done for the rest of the app.

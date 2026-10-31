@@ -1,0 +1,9 @@
+From: Weekly Deals <deals@promo.example>
+To: orders@acme-demo.test
+Subject: Your weekly offers
+Message-ID: <sample-newsletter@promo.example>
+Date: Fri, 16 Oct 2026 07:00:00 +0000
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><h1>This week</h1><p>Ten percent off everything.</p><img src="https://images.promo.example/banner.png" width="600" height="200"><img src="https://track.promo.example/open.gif?u=1" width="1" height="1"></body></html>

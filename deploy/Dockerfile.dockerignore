@@ -1,0 +1,12 @@
+.git
+.github
+ios
+edge
+design
+docs
+fonts
+deploy
+*.md
+**/node_modules
+**/.DS_Store
+server/bin

@@ -1,0 +1,2 @@
+// Demo = an optimised build for the owner's phone (scheme "Inbox Device"). Takes the server URL and dev token from Local.xcconfig like Debug.
+#include? "../Local.xcconfig"

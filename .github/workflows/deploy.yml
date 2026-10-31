@@ -1,0 +1,37 @@
+name: Deploy
+
+# Manual. Deploys the Cloudflare Email Worker. The server is not deployed from GitHub: it runs in Docker on
+# the owner's Mac mini and pulls the image that image.yml publishes to ghcr.io (docs/DEPLOY.md).
+# Each GitHub environment (staging, production) holds its own secrets and variables.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Where to deploy
+        type: choice
+        options: [staging, production]
+        default: staging
+
+jobs:
+  edge:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency: deploy-edge-${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: edge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: edge/package-lock.json
+      - run: npm ci
+      - run: npm test
+      # Secrets (INGEST_SECRET) are set once with `wrangler secret put`; vars come from wrangler.jsonc.
+      # INGEST_URL is the Tailscale Funnel address of the server's ingest listener (docs/DEPLOY.md).
+      - run: npx wrangler deploy --name "${{ vars.WORKER_NAME }}" --var "INGEST_URL:${{ vars.INGEST_URL }}" --var "FORWARD_TO:${{ vars.FORWARD_TO }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

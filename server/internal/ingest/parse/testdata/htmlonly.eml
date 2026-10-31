@@ -1,0 +1,7 @@
+From: x@example.org
+To: a@mydomain.com
+Subject: Html only
+Message-ID: <html-1@example.org>
+Content-Type: text/html; charset=utf-8
+
+<html><head><title>t</title><script>var x=1;</script></head><body><div>Hello</div><p>   world &amp; co</p></body></html>

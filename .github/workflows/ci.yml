@@ -1,0 +1,88 @@
+name: CI
+
+# The server image is built (and smoke tested) by image.yml, so there is no Docker job here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Server (vet, fmt, unit + integration, OpenAPI contract)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Lint
+        run: make lint
+      - name: Build
+        run: make build
+      # Starts Postgres 16 and an S3-compatible store with docker compose, then runs every test with TEST_* set.
+      - name: Tests (integration included)
+        run: make test-integration
+      - name: OpenAPI contract (routes <-> api/openapi.yaml)
+        run: cd server && go test -count=1 ./internal/contract/...
+      - name: Stop services
+        if: always()
+        run: make down
+
+  e2e:
+    name: Server end-to-end (real inboxd, fake Worker/Google/Cloudflare)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      # The real Worker (edge/src/index.ts) runs in Node 22.6+ inside the e2e run.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Starts docker compose, builds inboxd, runs the end-to-end scenario (about a minute).
+      - run: scripts/e2e.sh
+
+  edge:
+    name: Edge worker (vitest, tsc)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: edge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: edge/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npx tsc --noEmit
+
+  ios:
+    name: iOS build and tests
+    runs-on: macos-15            # needs an Xcode with the iOS 26 SDK; pin xcode-version below if the runner lacks it
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: latest-stable }
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Unit, feature, contract and snapshot tests
+        run: make ios-test            # creates its own simulator (IOS_SIM=... to rename)
+      - name: UI smoke tests (mock data)
+        run: make ios-ui-test
+      - name: Unsigned Release archive
+        run: cd ios && xcodegen generate && xcodebuild archive -project Inbox.xcodeproj -scheme Inbox -configuration Release -destination 'generic/platform=iOS' -archivePath build/Inbox.xcarchive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Inbox.xcarchive
+          path: ios/build/Inbox.xcarchive
